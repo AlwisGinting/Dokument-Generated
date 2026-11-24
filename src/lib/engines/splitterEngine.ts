@@ -192,7 +192,13 @@ function packFirstFitDecreasing(entries: readonly IndexedTransaction[]): Expande
     bin.amountCents += item.amountCents;
   }
 
-  return bins.map((bin) => bin.items);
+  return bins.map((bin) =>
+    bin.items.sort(
+      (left, right) =>
+        left.sourceIndex - right.sourceIndex ||
+        left.chunkIndex - right.chunkIndex,
+    ),
+  );
 }
 
 function duplicateKey(transaction: BkuTransaction): string {
@@ -245,7 +251,7 @@ function makeSplitUnits(transactions: readonly BkuTransaction[]): SplitUnit[] {
     }
     const transaction = entry.transaction;
     if (transaction.kategori === "BELANJA_BARANG") {
-      const key = `${transaction.tanggal}\u001f${transaction.sub_kategori_toko ?? "ATK"}`;
+      const key = `${monthForTransaction(transaction)}\u001f${transaction.sub_kategori_toko ?? "ATK"}`;
       const group = barangGroups.get(key) ?? [];
       group.push(entry);
       barangGroups.set(key, group);

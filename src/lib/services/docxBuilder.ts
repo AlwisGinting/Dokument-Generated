@@ -57,6 +57,40 @@ function fileSafeName(value: string): string {
   return safe.slice(0, 80);
 }
 
+const INDONESIAN_ACRONYMS = new Set([
+  "bop",
+  "kb",
+  "paud",
+  "pdam",
+  "sd",
+  "smp",
+  "sumut",
+  "tk",
+]);
+
+function titleCaseIndonesian(value: string): string {
+  return value
+    .trim()
+    .toLocaleLowerCase("id-ID")
+    .replace(/(^|[\s/-])([\p{L}\d])/gu, (_match, separator: string, initial: string) => {
+      return `${separator}${initial.toLocaleUpperCase("id-ID")}`;
+    })
+    .replace(/\b[\p{L}\d]+\b/gu, (word) =>
+      INDONESIAN_ACRONYMS.has(word.toLocaleLowerCase("id-ID"))
+        ? word.toLocaleUpperCase("id-ID")
+        : word,
+    );
+}
+
+function todayInIndonesia(): string {
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date());
+}
+
 async function renderTemplate(
   templateName: string,
   data: Record<string, unknown>,
@@ -100,6 +134,17 @@ async function renderTemplate(
 function buildBaseData(input: BuildLpjDocumentsInput): Record<string, unknown> {
   const school = input.schoolProfile;
   const metadata = input.metadata;
+  const schoolName = titleCaseIndonesian(school.nama_sekolah);
+  const village = titleCaseIndonesian(school.alamat_dusun_desa ?? "");
+  const district = titleCaseIndonesian(
+    school.kecamatan ?? metadata.kecamatan ?? "",
+  );
+  const regency = titleCaseIndonesian(
+    school.kabupaten ?? metadata.kabupaten ?? "",
+  );
+  const province = titleCaseIndonesian(
+    school.provinsi ?? metadata.provinsi ?? "",
+  );
   const tahun = input.tahunAnggaran ?? metadata.tahun ?? "";
   const totalPengeluaran =
     metadata.total_pengeluaran ??
@@ -113,17 +158,21 @@ function buildBaseData(input: BuildLpjDocumentsInput): Record<string, unknown> {
   const latarBelakangParagraf1 = input.latarBelakangNarasi?.trim();
 
   return {
-    nama_sekolah: school.nama_sekolah,
+    nama_sekolah: schoolName,
+    nama_sekolah_kapital: school.nama_sekolah.toLocaleUpperCase("id-ID"),
     npsn: school.npsn ?? "",
-    alamat_dusun_desa: school.alamat_dusun_desa ?? "",
-    alamat_jalan: school.alamat_jalan ?? "",
-    kecamatan: school.kecamatan ?? metadata.kecamatan ?? "",
-    kabupaten: school.kabupaten ?? metadata.kabupaten ?? "",
-    provinsi: school.provinsi ?? metadata.provinsi ?? "",
+    alamat_dusun_desa: village,
+    alamat_dusun_desa_kapital: (school.alamat_dusun_desa ?? "").toLocaleUpperCase("id-ID"),
+    alamat_jalan: titleCaseIndonesian(school.alamat_jalan ?? ""),
+    kecamatan: district,
+    kecamatan_kapital: district.toLocaleUpperCase("id-ID"),
+    kabupaten: regency,
+    kabupaten_kapital: regency.toLocaleUpperCase("id-ID"),
+    provinsi: province,
     email: school.email ?? "",
     no_hp: school.no_hp ?? "",
-    jabatan_kepsek: school.jabatan_kepsek || "Kepala Sekolah",
-    nama_kepsek: school.nama_kepsek ?? "",
+    jabatan_kepsek: titleCaseIndonesian(school.jabatan_kepsek || "Kepala Sekolah"),
+    nama_kepsek: titleCaseIndonesian(school.nama_kepsek ?? ""),
     tahun_anggaran: tahun,
     tahun_pelajaran: nextSchoolYear,
     nomor_surat: input.nomorSurat ?? "",
@@ -143,8 +192,8 @@ function buildBaseData(input: BuildLpjDocumentsInput): Record<string, unknown> {
       input.periodeRekap?.trim() ||
       [metadata.bulan, metadata.tahun].filter(Boolean).join(" "),
     total_pengeluaran: formatNumber(totalPengeluaran),
-    tempat_surat: input.tempatSurat ?? school.kabupaten ?? "",
-    tanggal_surat: input.tanggalSurat ?? "",
+    tempat_surat: village || titleCaseIndonesian(input.tempatSurat ?? regency),
+    tanggal_surat: input.tanggalSurat?.trim() || todayInIndonesia(),
     desa_sasaran: school.alamat_dusun_desa ?? "",
     total_siswa: school.jumlah_siswa_l + school.jumlah_siswa_p,
     jumlah_siswa_l: school.jumlah_siswa_l,
@@ -158,9 +207,9 @@ function buildBaseData(input: BuildLpjDocumentsInput): Record<string, unknown> {
           : "",
     latar_belakang_paragraf_1:
       latarBelakangParagraf1 ||
-      `Pendidikan anak usia dini merupakan fondasi penting bagi tumbuh kembang anak. ${school.nama_sekolah} menyelenggarakan layanan pendidikan yang aman, inklusif, dan sesuai tahap perkembangan peserta didik.`,
+      `Pendidikan anak usia dini merupakan fondasi penting bagi tumbuh kembang anak. ${schoolName} menyelenggarakan layanan pendidikan yang aman, inklusif, dan sesuai dengan tahap perkembangan peserta didik.`,
     latar_belakang_paragraf_2:
-      "Anak usia 1-6 tahun berada dalam masa perkembangan yang memerlukan rangsangan pendidikan yang tepat. Layanan PAUD jalur nonformal memberikan kesempatan kepada anak untuk belajar sesuai kebutuhan, potensi, dan lingkungan mereka.",
+      "Anak usia 1–6 tahun berada dalam masa perkembangan yang memerlukan stimulasi pendidikan secara tepat. Layanan PAUD melalui jalur nonformal memberi kesempatan kepada anak untuk belajar sesuai dengan kebutuhan, potensi, dan lingkungan mereka.",
     latar_belakang_paragraf_3:
       "Pembelajaran PAUD mengutamakan kegiatan bermain yang bermakna, aman, dan menyenangkan. Dengan dukungan sarana serta pembiayaan yang terencana dan dapat dipertanggungjawabkan, layanan pendidikan diharapkan berlangsung secara berkelanjutan.",
   };
@@ -213,9 +262,15 @@ export async function buildLpjDocuments(
       suffix: "cover",
       data: {
         ...baseData,
-        judul_dokumen:
+        judul_dokumen: (
           input.judulDokumen?.trim() ||
-          "LAPORAN PERTANGGUNGJAWABAN DAN SPJ PAUD",
+          "LAPORAN PERTANGGUNGJAWABAN DAN SPJ PAUD"
+        ).toLocaleUpperCase("id-ID"),
+        nama_sekolah: input.schoolProfile.nama_sekolah.toLocaleUpperCase("id-ID"),
+        alamat_dusun_desa: (input.schoolProfile.alamat_dusun_desa ?? "").toLocaleUpperCase("id-ID"),
+        kecamatan: (input.schoolProfile.kecamatan ?? input.metadata.kecamatan ?? "").toLocaleUpperCase("id-ID"),
+        kabupaten: (input.schoolProfile.kabupaten ?? input.metadata.kabupaten ?? "").toLocaleUpperCase("id-ID"),
+        provinsi: (input.schoolProfile.provinsi ?? input.metadata.provinsi ?? "").toLocaleUpperCase("id-ID"),
       },
     },
     {

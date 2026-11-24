@@ -331,11 +331,21 @@ function isRepeatedPdfLine(line: string): boolean {
     !normalized ||
     /\bbuku kas umum\b/.test(normalized) ||
     /^halaman\b/.test(normalized) ||
-    /^(?:jumlah|saldo awal|saldo akhir)\b/.test(normalized) ||
+    /^(?:jumlah|saldo awal|saldo akhir|menyetujui|kepala sekolah|bendahara|nip|pajak|bunga)\b/.test(
+      normalized,
+    ) ||
     /^(?:tanggal|kode kegiatan|kode rekening|no bukti|uraian|penerimaan|pengeluaran|saldo)\b/.test(
       normalized,
     )
   );
+}
+
+const PDF_BLOCK_FOOTER =
+  /(?:\b(?:menyetujui|kepala\s+sekolah|bendahara|pajak\s+bunga|saldo\s+akhir)\b|\bnip\.?(?=\s|$)|^\s*(?:pajak|bunga|jumlah)\b)/i;
+
+function stripPdfBlockFooter(line: string): string {
+  const footerIndex = line.search(PDF_BLOCK_FOOTER);
+  return footerIndex >= 0 ? line.slice(0, footerIndex).trim() : line;
 }
 
 function containsBkuDottedCode(line: string): boolean {
@@ -470,7 +480,7 @@ function parsePdfTransactionBlock(
 
   const description = lines
     .map((rawLine, index) => {
-      let line = rawLine;
+      let line = stripPdfBlockFooter(rawLine);
       if (index === 0) {
         line = line.replace(PDF_TRANSACTION_DATE, " ");
       }
@@ -494,7 +504,12 @@ function parsePdfTransactionBlock(
       if (kodeKegiatan && /^\d{1,3}$/.test(kodeKegiatan)) {
         line = line.replace(new RegExp(`^\\s*${kodeKegiatan}\\b`), " ");
       }
-      return line.replace(/\s+/g, " ").trim();
+      return line
+        .replace(/^\s*(?:(?:pembelian\s+barang|pembelian|pengadaan|belanja)\b[\s:,-]*)+/i, "")
+        .replace(/^\s*(?:uraian|keterangan|nama barang)\s*[:=-]\s*/i, "")
+        .replace(/[\s,;:|/-]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
     })
     .filter(Boolean)
     .join(" ")
@@ -543,6 +558,16 @@ function parseMultilinePdfTransactions(
       dateText = dateMatch[1];
       blockLines = [line];
     } else if (dateText) {
+      if (PDF_BLOCK_FOOTER.test(line)) {
+        const footerText = stripPdfBlockFooter(line);
+        if (footerText) {
+          blockLines.push(footerText);
+        }
+        finishBlock();
+        dateText = null;
+        blockLines = [];
+        continue;
+      }
       blockLines.push(line);
     }
   }

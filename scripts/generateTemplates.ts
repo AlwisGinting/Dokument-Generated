@@ -67,11 +67,18 @@ function paragraph(
     italics?: boolean;
     before?: number;
     after?: number;
+    firstLine?: number;
+    lineSpacing?: number;
   } = {},
 ): Paragraph {
   return new Paragraph({
     alignment: options.alignment ?? AlignmentType.LEFT,
-    spacing: { before: options.before ?? 0, after: options.after ?? 120 },
+    indent: options.firstLine ? { firstLine: options.firstLine } : undefined,
+    spacing: {
+      before: options.before ?? 0,
+      after: options.after ?? 120,
+      line: options.lineSpacing,
+    },
     children: [
       new TextRun({
         text,
@@ -152,19 +159,19 @@ function letterhead(logo: Buffer): (Paragraph | Table)[] {
                 size: 28,
                 after: 30,
               }),
-              paragraph("({nama_sekolah})", {
+              paragraph("({nama_sekolah_kapital})", {
                 alignment: AlignmentType.CENTER,
                 bold: true,
                 size: 28,
                 after: 30,
               }),
-              paragraph("{alamat_dusun_desa}. KECAMATAN {kecamatan}", {
+              paragraph("{alamat_dusun_desa_kapital}. KECAMATAN {kecamatan_kapital}", {
                 alignment: AlignmentType.CENTER,
                 bold: true,
                 size: 24,
                 after: 20,
               }),
-              paragraph("KABUPATEN {kabupaten}", {
+              paragraph("KABUPATEN {kabupaten_kapital}", {
                 alignment: AlignmentType.CENTER,
                 bold: true,
                 size: 24,
@@ -212,32 +219,20 @@ function createDocument(children: (Paragraph | Table)[]): Document {
   });
 }
 
-function signatureBlock(options: {
-  includePosition?: boolean;
-  includeSchool?: boolean;
-} = {}): Paragraph[] {
+function signatureBlock(): Paragraph[] {
   return [
     paragraph("{tempat_surat}, {tanggal_surat}", {
       alignment: AlignmentType.RIGHT,
       before: 180,
       after: 120,
     }),
-    ...(options.includeSchool
-      ? [
-          paragraph("{nama_sekolah}", {
-            alignment: AlignmentType.RIGHT,
-            after: 0,
-          }),
-        ]
-      : []),
-    ...(options.includePosition
-      ? [
-          paragraph("{jabatan_kepsek}", {
-            alignment: AlignmentType.RIGHT,
-            after: 1050,
-          }),
-        ]
-      : [blankLine(1050)]),
+    paragraph("{nama_sekolah_kapital}", {
+      alignment: AlignmentType.RIGHT,
+      after: 0,
+    }),
+    blankLine(300),
+    blankLine(300),
+    blankLine(300),
     paragraph("{nama_kepsek}", {
       alignment: AlignmentType.RIGHT,
       bold: true,
@@ -406,42 +401,41 @@ function createBopReport(logo: Buffer): Document {
       "Demikianlah laporan penggunaan dana ini disampaikan oleh Lembaga {nama_sekolah} agar dapat dimaklumi.",
       { after: 260 },
     ),
-    ...signatureBlock({ includePosition: true }),
+    ...signatureBlock(),
   ]);
 }
 
 function createBackground(logo: Buffer): Document {
+  const bodyParagraph = (text: string, after = 120) =>
+    paragraph(text, {
+      alignment: AlignmentType.JUSTIFIED,
+      firstLine: 720,
+      lineSpacing: 276,
+      after,
+    });
+
   return createDocument([
     ...letterhead(logo),
     paragraph("A. Latar Belakang", { bold: true, before: 80, after: 100 }),
-    paragraph("{latar_belakang_paragraf_1}", { after: 100 }),
-    paragraph("{latar_belakang_paragraf_2}", { after: 100 }),
-    paragraph("{latar_belakang_paragraf_3}", { after: 180 }),
+    bodyParagraph("{latar_belakang_paragraf_1}", 100),
+    bodyParagraph("{latar_belakang_paragraf_2}", 100),
+    bodyParagraph("{latar_belakang_paragraf_3}", 180),
     paragraph("B. Tujuan", { bold: true, before: 80, after: 100 }),
-    paragraph("1. Membentuk dan menanamkan budi pekerti serta nilai-nilai keagamaan sejak dini.", { after: 70 }),
-    paragraph("2. Mengembangkan kemampuan komunikasi dan bahasa anak dalam kehidupan sehari-hari.", { after: 70 }),
-    paragraph("3. Mengembangkan daya pikir, kreativitas, dan kemampuan memecahkan masalah sederhana.", { after: 70 }),
-    paragraph("4. Membiasakan perilaku disiplin, mandiri, dan bertanggung jawab sesuai usia anak.", { after: 70 }),
-    paragraph("5. Mengembangkan kemampuan motorik dasar melalui kegiatan yang aman dan menyenangkan.", { after: 180 }),
+    bodyParagraph("1. Menanamkan budi pekerti luhur dan nilai-nilai agama sejak usia dini.", 70),
+    bodyParagraph("2. Mengembangkan kemampuan berkomunikasi dan berbahasa dalam kehidupan sehari-hari.", 70),
+    bodyParagraph("3. Mengembangkan daya pikir, kreativitas, dan kemampuan memecahkan masalah sederhana.", 70),
+    bodyParagraph("4. Membiasakan perilaku disiplin, mandiri, dan bertanggung jawab sesuai dengan tahap perkembangan anak.", 70),
+    bodyParagraph("5. Mengembangkan kemampuan motorik dasar melalui kegiatan yang aman, sehat, dan menyenangkan.", 180),
     paragraph("C. Peserta Didik / Sasaran", { bold: true, before: 80, after: 100 }),
-    paragraph(
-      "Sasaran kegiatan adalah peserta didik {nama_sekolah} yang berdomisili di {desa_sasaran}. Jumlah peserta didik sebanyak {total_siswa} anak, terdiri atas {jumlah_siswa_l} laki-laki dan {jumlah_siswa_p} perempuan.",
-      { after: 180 },
-    ),
+    bodyParagraph("Sasaran kegiatan ini adalah peserta didik {nama_sekolah} yang berdomisili di {desa_sasaran}. Jumlah peserta didik sebanyak {total_siswa} anak, terdiri atas {jumlah_siswa_l} anak laki-laki dan {jumlah_siswa_p} anak perempuan.", 180),
     paragraph("D. Hasil yang Dicapai", { bold: true, before: 80, after: 100 }),
-    paragraph(
-      "Dukungan dana BOP bagi {nama_sekolah} membantu pemenuhan kebutuhan pembelajaran dan operasional, meningkatkan kualitas layanan, serta mendukung tumbuh kembang peserta didik. Kegiatan dan penggunaan dana dicatat sebagai bahan evaluasi dan pertanggungjawaban.",
-      { after: 180 },
-    ),
+    bodyParagraph("Dukungan dana BOP bagi {nama_sekolah} membantu memenuhi kebutuhan pembelajaran dan operasional, meningkatkan mutu layanan, serta mendukung tumbuh kembang peserta didik. Seluruh kegiatan dan penggunaan dana dicatat sebagai bahan evaluasi dan pertanggungjawaban.", 180),
     paragraph("E. Tindak Lanjut", { bold: true, before: 80, after: 100 }),
-    paragraph(
-      "{nama_sekolah} telah menyelenggarakan layanan selama {lama_berdiri} tahun. Lembaga akan menjaga keberlanjutan layanan, menindaklanjuti hasil evaluasi, dan mengusulkan bantuan untuk tahun anggaran {tahun_berikutnya}.",
-      { after: 180 },
-    ),
+    bodyParagraph("{nama_sekolah} telah menyelenggarakan layanan pendidikan selama {lama_berdiri} tahun. Lembaga berkomitmen menjaga keberlanjutan layanan, menindaklanjuti hasil evaluasi, dan mengusulkan dukungan untuk tahun anggaran {tahun_berikutnya}.", 180),
     paragraph("F. Saran", { bold: true, before: 80, after: 100 }),
-    paragraph("1. Penyaluran bantuan sebaiknya dilakukan pada awal tahun ajaran agar kegiatan dapat direncanakan dan dilaksanakan tepat waktu.", { after: 70 }),
-    paragraph("2. Pendanaan lanjutan diharapkan tersedia secara berkesinambungan sesuai kebutuhan dan ketentuan yang berlaku.", { after: 220 }),
-    ...signatureBlock({ includeSchool: true }),
+    bodyParagraph("1. Bantuan sebaiknya disalurkan pada awal tahun ajaran agar kegiatan dapat direncanakan dan dilaksanakan tepat waktu.", 70),
+    bodyParagraph("2. Dukungan pendanaan lanjutan diharapkan tersedia secara berkesinambungan sesuai kebutuhan dan ketentuan yang berlaku.", 220),
+    ...signatureBlock(),
   ]);
 }
 
@@ -541,7 +535,7 @@ function barangPages(logo: Buffer, includePrices: boolean): (Paragraph | Table)[
     paragraph("Ketentuan:", { bold: true, before: 180, after: 90 }),
     paragraph("1. Barang harus sesuai dengan jenis, spesifikasi, dan jumlah pada tabel.", { after: 70 }),
     paragraph("2. Barang diantar dalam keadaan baik dan diperiksa oleh pihak sekolah.", { after: 170 }),
-    ...signatureBlock({ includePosition: true, includeSchool: true }),
+    ...signatureBlock(),
   ];
 }
 

@@ -194,7 +194,7 @@ async function testBkuPdfParsing(): Promise<void> {
   assert.equal(parsed.metadata.npsn, "12345678");
   assert.equal(parsed.transactions.length, 1);
   assert.equal(parsed.transactions[0].bulan, "Januari");
-  assert.equal(parsed.transactions[0].uraian, "Pembelian pensil");
+  assert.equal(parsed.transactions[0].uraian, "pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
 }
 
@@ -212,6 +212,10 @@ async function testArkasMultilinePdfParsing(): Promise<void> {
     "Pengeluaran: 1.250.000,00",
     "Saldo: 5.000.000,00",
     "Halaman 1",
+    "Menyetujui,",
+    "Kepala Sekolah",
+    "Bendahara,",
+    "NIP. 19800101 200001 1 001",
     "2026-05-14 01.03.02 5.1.02.02.0024",
     "BPU/2026/002 Pembelian kertas dan tinta",
     "0 250.000,00 4.750.000,00",
@@ -246,10 +250,18 @@ async function testArkasMultilinePdfParsing(): Promise<void> {
   assert.deepEqual(
     parsed.transactions.map(({ uraian }) => uraian),
     [
-      "Pembelian alat tulis kantor",
-      "Pembelian kertas dan tinta",
-      "Pembelian buku gambar",
+      "alat tulis kantor",
+      "kertas dan tinta",
+      "buku gambar",
     ],
+  );
+  assert.ok(
+    parsed.transactions.every(
+      ({ uraian }) =>
+        !/menyetujui|kepala sekolah|bendahara|nip|pajak|bunga|saldo akhir|jumlah/i.test(
+          uraian,
+        ),
+    ),
   );
   assert.deepEqual(
     parsed.transactions.map(({ pengeluaran }) => pengeluaran),
@@ -312,16 +324,16 @@ function testGoogleDriveFolderIdParsing(): void {
 async function testDocxBuilder(): Promise<void> {
   const schoolProfile: SchoolProfile = {
     id: "school-1",
-    nama_sekolah: "PAUD Melati",
+    nama_sekolah: "kb paud melati",
     npsn: "12345678",
-    alamat_dusun_desa: "Desa Melati",
+    alamat_dusun_desa: "desa rumah lengo",
     alamat_jalan: "Jalan Melati",
-    kecamatan: "Sukamaju",
-    kabupaten: "Contoh",
+    kecamatan: "stm hulu",
+    kabupaten: "deli serdang",
     provinsi: "Jawa Barat",
     email: null,
     no_hp: null,
-    nama_kepsek: "Ibu Melati",
+    nama_kepsek: "marsahaya siburian",
     jabatan_kepsek: "Kepala Sekolah",
     nama_bendahara: null,
     jumlah_siswa_l: 9,
@@ -405,6 +417,30 @@ async function testDocxBuilder(): Promise<void> {
       assert.ok(xml.indexOf("PESANAN BARANG") < xml.indexOf("SURAT PENGANTAR BARANG"));
       assert.ok(xml.indexOf("SURAT PENGANTAR BARANG") < xml.indexOf("KWITANSI PEMBELIAN"));
     }
+    if (document.template === "template_cover.docx") {
+      assert.ok(xml.includes("LAPORAN PERTANGGUNGJAWABAN DAN SPJ PAUD"));
+      assert.ok(xml.includes("KB PAUD MELATI"));
+      assert.ok(xml.includes("DESA RUMAH LENGO"));
+      assert.ok(xml.includes("STM HULU"));
+      assert.ok(xml.includes("DELI SERDANG"));
+    }
+    if (
+      document.template === "template_laporan_bop.docx" ||
+      document.template === "template_latar_belakang.docx"
+    ) {
+      assert.ok(xml.includes("(KB PAUD MELATI)"));
+      assert.ok(xml.includes("DESA RUMAH LENGO. KECAMATAN STM HULU"));
+      assert.ok(xml.includes("KABUPATEN DELI SERDANG"));
+      assert.ok(xml.includes("KB PAUD MELATI"));
+      assert.ok(xml.includes("Marsahaya Siburian"));
+      assert.ok(/\d{1,2} [\p{L}]+ \d{4}/u.test(xml));
+      assert.ok(!xml.includes("/ Kota,"));
+    }
+    if (document.template === "template_latar_belakang.docx") {
+      assert.ok(xml.includes('w:firstLine="720"'));
+      assert.ok(xml.includes('w:line="276"'));
+      assert.ok(xml.includes("w:val=\"both\""));
+    }
     if (document.template === "template_laporan_bop.docx") {
       assert.ok(xml.includes("748.000"));
     }
@@ -479,6 +515,46 @@ async function main(): Promise<void> {
   assert.equal(
     goodsParts.reduce((total, part) => total + part.total_part, 0),
     1_500_000,
+  );
+  const groupedSameMonth = splitTransactionsIntoSpjParts([
+    classified({
+      tanggal: "2026-01-15",
+      no_bukti: "ATK-01",
+      uraian: "Pensil",
+      pengeluaran: 100_000,
+    }),
+    classified({
+      tanggal: "2026-01-20",
+      no_bukti: "ATK-02",
+      uraian: "Penghapus",
+      pengeluaran: 50_000,
+    }),
+    classified({
+      tanggal: "2026-01-21",
+      no_bukti: "ATK-03",
+      uraian: "Buku Tulis",
+      pengeluaran: 150_000,
+    }),
+    classified({
+      tanggal: "2026-02-01",
+      no_bukti: "ATK-04",
+      uraian: "Pensil",
+      pengeluaran: 25_000,
+    }),
+  ]);
+  assert.equal(groupedSameMonth.length, 2);
+  const januaryGroupedPart = groupedSameMonth.find(
+    (part) => part.bulan_alokasi === "Januari",
+  );
+  assert.ok(januaryGroupedPart);
+  assert.deepEqual(
+    januaryGroupedPart.items.map((item) => item.nama_barang),
+    ["Pensil", "Penghapus", "Buku Tulis"],
+  );
+  assert.equal(januaryGroupedPart.total_part, 300_000);
+  assert.equal(
+    groupedSameMonth.find((part) => part.bulan_alokasi === "Februari")?.items.length,
+    1,
   );
   const goodsAcrossMonths = splitTransactionsIntoSpjParts([
     classified({
