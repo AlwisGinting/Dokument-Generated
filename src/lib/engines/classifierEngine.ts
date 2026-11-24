@@ -16,6 +16,11 @@ const normalize = (value: string): string =>
 const endsWithAccountCode = (code: string, suffix: string): boolean =>
   code.replace(/\s/g, "").endsWith(suffix);
 
+const KNOWN_EDUCATOR_NAMES = [
+  "Marsahaya Siburian",
+  "Agus Toni Ginting",
+] as const;
+
 function hasKeyword(text: string, keywords: string[]): boolean {
   return keywords.some((keyword) =>
     new RegExp(`(^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`, "i").test(
@@ -37,7 +42,6 @@ export function classifyTransaction(
 ): BkuTransaction {
   const description = normalize(transaction.uraian);
   const accountCode = transaction.kode_rekening;
-  const roundedNominal = Number.isInteger(transaction.pengeluaran);
   let kategori: BkuCategory;
   let sub_kategori_toko: VendorCategory | null = null;
 
@@ -48,14 +52,18 @@ export function classifyTransaction(
     "insentif",
     "transport guru",
     "transport pendidik",
+    "guru",
+    "pendidik",
+    "tenaga kependidikan",
+    "operator",
   ]);
   const titledEducator =
     /\b(?:bapak|pak|ibu|bu)\s+[a-z]+(?:\s+[a-z]+){0,2}\b/.test(description);
-  const educatorNameWithRoundPayment =
-    roundedNominal &&
-    (hasEducatorName(description, educatorNames) || titledEducator);
+  const educatorName =
+    hasEducatorName(description, [...KNOWN_EDUCATOR_NAMES, ...educatorNames]) ||
+    titledEducator;
 
-  if (honorCode || honorKeyword || educatorNameWithRoundPayment) {
+  if (honorCode || honorKeyword || educatorName) {
     kategori = "HONOR_GURU";
   } else if (
     endsWithAccountCode(accountCode, ".0061") ||

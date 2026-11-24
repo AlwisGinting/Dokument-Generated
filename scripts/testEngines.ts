@@ -5,7 +5,10 @@ import PizZip from "pizzip";
 import * as XLSX from "xlsx";
 import { parseBkuFile } from "@/lib/engines/bkuParser";
 import { mergeBkuParseResults } from "@/lib/engines/bkuBatch";
-import { classifyTransaction } from "@/lib/engines/classifierEngine";
+import {
+  classifyTransaction,
+  classifyTransactions,
+} from "@/lib/engines/classifierEngine";
 import { splitTransactionsIntoSpjParts, MAX_BARANG_PART_CENTS } from "@/lib/engines/splitterEngine";
 import { terbilangRupiah } from "@/lib/engines/terbilang";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
@@ -199,6 +202,60 @@ async function testBkuPdfParsing(): Promise<void> {
   assert.equal(parsed.transactions[0].bulan, "Januari");
   assert.equal(parsed.transactions[0].uraian, "Pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
+}
+
+async function testZeroExpensePdfBatchAndPageFooter(): Promise<void> {
+  const makePdf = async (lines: string[]): Promise<Buffer> => {
+    const document = await PDFDocument.create();
+    const page = document.addPage([792, 792]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    for (const [index, text] of lines.entries()) {
+      page.drawText(text, {
+        x: 48,
+        y: 748 - index * 18,
+        size: 9,
+        font,
+      });
+    }
+    return Buffer.from(await document.save());
+  };
+
+  const zeroExpense = await parseBkuFile(
+    await makePdf([
+      "Buku Kas Umum",
+      "Periode: April 2024",
+      "NPSN: 69762997",
+      "Saldo Bank Bulan April 2024",
+      "Saldo Tunai Bulan April 2024",
+      "Jumlah 0 0 1.000.000",
+    ]),
+    "bku-output apr.pdf",
+  );
+  assert.equal(zeroExpense.transactions.length, 0);
+  assert.equal(zeroExpense.metadata.audit?.expectedPengeluaran, 0);
+  assert.equal(zeroExpense.metadata.audit?.verified, true);
+
+  const active = await parseBkuFile(
+    await makePdf([
+      "Buku Kas Umum",
+      "Periode: Mei 2024",
+      "NPSN: 69762997",
+      "13-05-2024 03.03.18 5.1.02.01.01.0024",
+      "BNU01 Pencil BKU Mei 2024 - NPSN: 69762997, Nama Sekolah: KB PAUD MELATI",
+      "0 340.000 660.000",
+      "Jumlah 0 340.000 660.000",
+    ]),
+    "bku-output mei.pdf",
+  );
+  assert.equal(active.transactions.length, 1);
+  assert.equal(active.transactions[0].uraian, "Pencil");
+  assert.equal(active.transactions[0].pengeluaran, 340_000);
+  assert.equal(active.transactions[0].no_bukti, "BNU01");
+
+  const batch = mergeBkuParseResults([zeroExpense, active]);
+  assert.equal(batch.transactions.length, 1);
+  assert.equal(batch.metadata.total_pengeluaran, 340_000);
+  assert.equal(batch.zeroExpenseFileCount, 1);
 }
 
 async function testArkasMultilinePdfParsing(): Promise<void> {
@@ -560,6 +617,7 @@ async function testDocxBuilder(): Promise<void> {
       id: "spj-goods-1",
       kode_part: "ATK-001",
       is_barang: true,
+      kategori_bku: "BELANJA_BARANG",
       kategori_toko: "ATK",
       bulan_alokasi: "Januari",
       tanggal_transaksi: "2026-01-15",
@@ -582,6 +640,7 @@ async function testDocxBuilder(): Promise<void> {
       id: "spj-utility-1",
       kode_part: "LISTRIK-001",
       is_barang: false,
+      kategori_bku: "UTILITAS",
       kategori_toko: null,
       bulan_alokasi: "Januari",
       tanggal_transaksi: "2026-01-15",
@@ -677,6 +736,69 @@ async function testDocxBuilder(): Promise<void> {
   assert.equal((utilityXml.match(/w:type="page"/g) ?? []).length, 0);
   assert.ok(utilityXml.includes("KWITANSI PEMBELIAN / PEMBAYARAN"));
   assert.ok(!utilityXml.includes("PESANAN BARANG"));
+
+  const fiveItemPart: SpjPart = {
+    ...parts[0],
+    items: Array.from({ length: 5 }, (_, index) => ({
+      no: index + 1,
+      nama_barang:
+        index === 1 ? "Buku Tulis (bagian 2)" : `Barang ${index + 1}`,
+      diantar: "2026-01-15",
+      banyaknya: index === 1 ? "Bagian 2 dari 2" : "1",
+      harga_satuan: 100_000,
+      jumlah_harga: 100_000,
+    })),
+    total_part: 500_000,
+  };
+  const fiveItemDocument = (await buildLpjDocuments({
+    schoolProfile,
+    metadata,
+    parts: [fiveItemPart],
+  })).find((document) => document.template === "template_spj_part.docx");
+  assert.ok(fiveItemDocument);
+  const fiveItemXml = new PizZip(fiveItemDocument.buffer)
+    .file("word/document.xml")
+    ?.asText();
+  assert.ok(fiveItemXml);
+  assert.equal((fiveItemXml.match(/w:type="page"/g) ?? []).length, 2);
+  assert.equal((fiveItemXml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 1);
+  for (const itemName of [
+    "Barang 1",
+    "Buku Tulis",
+    "Barang 3",
+    "Barang 4",
+    "Barang 5",
+  ]) {
+    assert.equal(
+      (fiveItemXml.match(new RegExp(itemName, "g")) ?? []).length,
+      2,
+      `${itemName} appears in both goods tables`,
+    );
+  }
+  assert.ok(!/bagian/i.test(fiveItemXml));
+
+  const honorPart: SpjPart = {
+    ...parts[1],
+    kode_part: "HONOR-001",
+    kategori_bku: "HONOR_GURU",
+    uraian_singkat: "Honor Agus Toni Ginting",
+    total_part: 1_000_000,
+  };
+  const honorDocument = (await buildLpjDocuments({
+    schoolProfile,
+    metadata,
+    parts: [honorPart],
+  })).find((document) => document.template === "template_spj_part.docx");
+  assert.ok(honorDocument);
+  const honorXml = new PizZip(honorDocument.buffer)
+    .file("word/document.xml")
+    ?.asText();
+  assert.ok(honorXml);
+  assert.equal((honorXml.match(/w:type="page"/g) ?? []).length, 0);
+  assert.ok(honorXml.includes("KWITANSI PEMBAYARAN HONORARIUM"));
+  assert.ok(!honorXml.includes("PESANAN BARANG"));
+  assert.ok(!honorXml.includes("SURAT PENGANTAR BARANG"));
+  assert.ok(!/bagian/i.test(honorXml));
 }
 
 async function main(): Promise<void> {
@@ -758,6 +880,24 @@ async function main(): Promise<void> {
     groupedSameMonth.find((part) => part.bulan_alokasi === "Februari")?.items.length,
     1,
   );
+  const fiveItemOrder = splitTransactionsIntoSpjParts(
+    ["Pensil", "Penghapus", "Buku Tulis", "Kertas F4", "Tinta Printer"].map(
+      (uraian, index) =>
+        classified({
+          no_bukti: `ATK-MULTI-${index + 1}`,
+          uraian,
+          pengeluaran: 100_000,
+        }),
+    ),
+  );
+  assert.equal(fiveItemOrder.length, 1);
+  assert.equal(fiveItemOrder[0].items.length, 5);
+  assert.ok(fiveItemOrder[0].items.every((item) => item.banyaknya === "1"));
+  assert.ok(
+    fiveItemOrder[0].items.every(
+      (item) => !/bagian/i.test(item.nama_barang + item.banyaknya),
+    ),
+  );
   const goodsAcrossMonths = splitTransactionsIntoSpjParts([
     classified({
       tanggal: "2026-01-15",
@@ -801,6 +941,15 @@ async function main(): Promise<void> {
   assert.ok(
     oversizedGoods.every((part) => part.total_part * 100 <= MAX_BARANG_PART_CENTS),
   );
+  assert.ok(
+    oversizedGoods.every((part) =>
+      part.items.every(
+        (item) =>
+          item.banyaknya === "1" &&
+          !/bagian/i.test(item.nama_barang + item.banyaknya),
+      ),
+    ),
+  );
 
   const salaryParts = splitTransactionsIntoSpjParts([
     classified({
@@ -814,6 +963,61 @@ async function main(): Promise<void> {
   assert.equal(salaryParts[0].is_barang, false);
   assert.equal(salaryParts[0].total_part, 1_500_000);
   assert.deepEqual(validateSpjParts(salaryParts), []);
+  assert.equal(salaryParts[0].kategori_bku, "HONOR_GURU");
+  assert.equal(salaryParts[0].items.length, 0);
+
+  const namedEducators = [
+    transaction({
+      no_bukti: "HONOR-MARSAHAYA",
+      uraian: "MARSAHAYA SIBURIAN",
+      kode_rekening: "5.1.02.02.01.0013",
+      pengeluaran: 1_500_000,
+    }),
+    transaction({
+      no_bukti: "HONOR-AGUS",
+      uraian: "AGUS TONI GINTING",
+      kode_rekening: "5.1.02.02.01.0013",
+      pengeluaran: 1_000_000,
+    }),
+  ];
+  assert.ok(
+    classifyTransactions(namedEducators).every(
+      (item) => item.kategori === "HONOR_GURU",
+    ),
+  );
+  assert.equal(
+    classifyTransaction(
+      transaction({ uraian: "Honor tenaga kependidikan operator" }),
+    ).kategori,
+    "HONOR_GURU",
+  );
+  const repeatedHonorParts = splitTransactionsIntoSpjParts(
+    classifyTransactions([
+      transaction({
+        kode_rekening: "5.1.02.02.01.0013",
+        no_bukti: "BNU-HONOR-01",
+        uraian: "AGUS TONI GINTING",
+        pengeluaran: 1_000_000,
+      }),
+      transaction({
+        kode_rekening: "5.1.02.02.01.0013",
+        no_bukti: "BNU-HONOR-01",
+        uraian: "AGUS TONI GINTING",
+        pengeluaran: 1_000_000,
+      }),
+    ]),
+  );
+  assert.equal(repeatedHonorParts.length, 2);
+  assert.ok(
+    repeatedHonorParts.every(
+      (part) =>
+        part.kategori_bku === "HONOR_GURU" &&
+        !part.is_barang &&
+        part.bulan_alokasi === "Januari" &&
+        part.total_part === 1_000_000 &&
+        part.items.length === 0,
+    ),
+  );
   const salariesAcrossMonths = splitTransactionsIntoSpjParts([
     classified({
       tanggal: "2026-01-15",
@@ -862,6 +1066,7 @@ async function main(): Promise<void> {
   await testBkuXlsxParsing();
   await testAnnualAndMonthlyBkuBatch();
   await testBkuPdfParsing();
+  await testZeroExpensePdfBatchAndPageFooter();
   await testArkasMultilinePdfParsing();
   await testCoordinateBasedBkuVariants();
   await testArkasMay2024EightColumnPdfParsing();

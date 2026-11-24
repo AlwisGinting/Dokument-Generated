@@ -30,6 +30,7 @@ export interface BkuBatchSummary {
   metadata: BkuMetadata;
   period: string;
   transactions: UnclassifiedBkuTransaction[];
+  zeroExpenseFileCount: number;
 }
 
 function normalizedText(value: string): string {
@@ -191,11 +192,14 @@ export function mergeBkuParseResults(
     throw new Error("Setidaknya satu hasil BKU diperlukan.");
   }
 
-  const transactions = uniqueAcrossFiles(results);
+  const activeResults = results.filter((result) => result.transactions.length > 0);
+  const sourceResults = activeResults.length > 0 ? activeResults : results;
+  const zeroExpenseFileCount = results.length - activeResults.length;
+  const transactions = uniqueAcrossFiles(sourceResults);
   const firstMetadataValue = <K extends keyof BkuMetadata>(
     key: K,
   ): BkuMetadata[K] => {
-    for (const result of results) {
+    for (const result of sourceResults) {
       const value = result.metadata[key];
       if (value !== null) {
         return value;
@@ -216,7 +220,7 @@ export function mergeBkuParseResults(
     total_pengeluaran: firstMetadataValue("total_pengeluaran"),
     saldo_akhir: firstMetadataValue("saldo_akhir"),
   };
-  const points = datePoints(transactions, results);
+  const points = datePoints(transactions, sourceResults);
   const period = getPeriod(points, baseMetadata);
   const sortedPoints = [...points].sort(
     (left, right) =>
@@ -245,10 +249,12 @@ export function mergeBkuParseResults(
             0,
           ) * 100,
         ) / 100
-      : baseMetadata.total_pengeluaran;
+      : results.every((result) => result.transactions.length === 0)
+        ? 0
+        : baseMetadata.total_pengeluaran;
   const uniqueAuditResults = new Map<string, BkuAudit>();
   let conflictingDuplicateAudit = false;
-  for (const result of results) {
+  for (const result of sourceResults) {
     const audit = result.metadata.audit;
     if (!audit) {
       continue;
@@ -267,7 +273,7 @@ export function mergeBkuParseResults(
   const audits = [...uniqueAuditResults.values()];
   const expectedComplete =
     !conflictingDuplicateAudit &&
-    results.every((result) => result.metadata.audit != null) &&
+    sourceResults.every((result) => result.metadata.audit != null) &&
     audits.every((audit) => audit.expectedPengeluaran !== null);
   const expectedPengeluaran = expectedComplete
     ? audits.reduce(
@@ -289,7 +295,6 @@ export function mergeBkuParseResults(
     difference,
     balanceMismatchCount,
     verified:
-      transactions.length > 0 &&
       expectedPengeluaran !== null &&
       difference === 0 &&
       balanceMismatchCount === 0,
@@ -305,5 +310,6 @@ export function mergeBkuParseResults(
     },
     period,
     transactions,
+    zeroExpenseFileCount,
   };
 }

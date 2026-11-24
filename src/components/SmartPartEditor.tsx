@@ -125,15 +125,14 @@ export default function SmartPartEditor({
     const secondAmount = (cents - Math.floor(cents / 2)) / 100;
     const first: SpjItem = {
       ...item,
-      banyaknya: "Bagian 1",
+      banyaknya: "1",
       harga_satuan: firstAmount,
       jumlah_harga: firstAmount,
     };
     const second: SpjItem = {
       ...item,
       no: item.no + 1,
-      nama_barang: item.nama_barang ? `${item.nama_barang} (bagian 2)` : "",
-      banyaknya: "Bagian 2",
+      banyaknya: "1",
       harga_satuan: secondAmount,
       jumlah_harga: secondAmount,
     };

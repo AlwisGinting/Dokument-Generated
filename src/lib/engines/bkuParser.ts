@@ -336,6 +336,10 @@ function isRepeatedPdfLine(line: string): boolean {
     !normalized ||
     /\bbuku kas umum\b/.test(normalized) ||
     /^halaman\b/.test(normalized) ||
+    /^bku\s+(?:januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+\d{4}\s+npsn\b/.test(
+      normalized,
+    ) ||
+    /^nama sekolah\s*:/.test(normalized) ||
     /^1\s+2\s+3\s+4\s+5\s+6\s+7\s+8$/.test(normalized) ||
     /^(?:saldo bank|saldo tunai) bulan\b/.test(normalized) ||
     /^(?:jumlah|saldo awal|saldo akhir|menyetujui|kepala sekolah|bendahara|nip|pajak|bunga)\b/.test(
@@ -349,13 +353,49 @@ function isRepeatedPdfLine(line: string): boolean {
 
 const PDF_BLOCK_FOOTER =
   /(?:\b(?:menyetujui|kepala\s+sekolah|bendahara|pajak\s+bunga|saldo\s+akhir)\b|\bnip\.?(?=\s|$)|^\s*(?:pajak|bunga|jumlah)\b)/i;
+const PDF_PAGE_FOOTER =
+  /\b(?:BKU\s+(?:Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember)\s+\d{4}\s*[-–]\s*NPSN|Nama\s+Sekolah\s*:|Halaman\s+\d+\s+dari\s+\d+)/i;
 const PDF_BOOK_CLOSED = /\bpada hari ini\b/i;
 const PDF_PROOF_CODE = /\b(?:BNU|BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/i;
 const PDF_DOTTED_CODE = /(?<![\d.])\d+(?:\.\d+){1,}\.?(?![\d.])/g;
 
 function stripPdfBlockFooter(line: string): string {
-  const footerIndex = line.search(PDF_BLOCK_FOOTER);
+  const indexes = [line.search(PDF_BLOCK_FOOTER), line.search(PDF_PAGE_FOOTER)]
+    .filter((index) => index >= 0);
+  const footerIndex = indexes.length > 0 ? Math.min(...indexes) : -1;
   return footerIndex >= 0 ? line.slice(0, footerIndex).trim() : line;
+}
+
+function stripCoordinatePageFooter(
+  items: readonly StructuredTextItem[],
+): StructuredTextItem[] {
+  const spans: Array<{ start: number; end: number; item: StructuredTextItem }> = [];
+  let cursor = 0;
+  for (const item of items) {
+    spans.push({ start: cursor, end: cursor + item.str.length, item });
+    cursor += item.str.length + 1;
+  }
+  const joined = items.map((item) => item.str).join(" ");
+  const footerIndex = joined.search(PDF_PAGE_FOOTER);
+  if (footerIndex < 0) {
+    return items.slice();
+  }
+
+  const retained: StructuredTextItem[] = [];
+  for (const span of spans) {
+    if (span.start >= footerIndex) {
+      break;
+    }
+    const textEnd = Math.min(span.end, footerIndex);
+    const text = span.item.str.slice(0, textEnd - span.start).trim();
+    if (text) {
+      retained.push({ ...span.item, str: text });
+    }
+    if (span.end >= footerIndex) {
+      break;
+    }
+  }
+  return retained;
 }
 
 function containsBkuDottedCode(line: string): boolean {
@@ -597,6 +637,13 @@ function parseMultilinePdfTransactions(
       dateText = dateMatch[1];
       blockLines = [line];
     } else if (dateText) {
+      if (PDF_PAGE_FOOTER.test(line)) {
+        const footerText = stripPdfBlockFooter(line);
+        if (footerText) {
+          blockLines.push(footerText);
+        }
+        continue;
+      }
       if (PDF_BLOCK_FOOTER.test(line)) {
         const footerText = stripPdfBlockFooter(line);
         if (footerText) {
@@ -744,7 +791,6 @@ function createBkuAudit(
     difference,
     balanceMismatchCount,
     verified:
-      transactions.length > 0 &&
       expectedPengeluaran !== null &&
       difference === 0 &&
       balanceMismatchCount === 0,
@@ -1079,8 +1125,8 @@ function parseCoordinatePdfPages(
 
   for (const page of pages) {
     for (const row of groupPdfTextRows(page)) {
-      const rowText = row.items.map((item) => item.str).join(" ");
-      if (PDF_BOOK_CLOSED.test(rowText)) {
+      const sourceText = row.items.map((item) => item.str).join(" ");
+      if (PDF_BOOK_CLOSED.test(sourceText)) {
         finishPending();
         return {
           transactions: transactions.map(({ transaction }) => transaction),
@@ -1093,7 +1139,16 @@ function parseCoordinatePdfPages(
         };
       }
 
-      const detectedAnchors = detectPdfColumnAnchors(row);
+      const cleanedRow: PdfTextRow = {
+        ...row,
+        items: stripCoordinatePageFooter(row.items),
+      };
+      const rowText = cleanedRow.items.map((item) => item.str).join(" ");
+      if (!rowText.trim()) {
+        continue;
+      }
+
+      const detectedAnchors = detectPdfColumnAnchors(cleanedRow);
       if (detectedAnchors) {
         anchors = detectedAnchors;
         continue;
@@ -1102,8 +1157,8 @@ function parseCoordinatePdfPages(
         continue;
       }
 
-      const cells = coordinateCells(row, anchors);
-      const text = coordinateCellText(row.items);
+      const cells = coordinateCells(cleanedRow, anchors);
+      const text = coordinateCellText(cleanedRow.items);
       const normalizedRow = normalize(text);
       const expenseCell = coordinateCellMoney(cells.pengeluaran);
       if (/^jumlah\b/.test(normalizedRow)) {
@@ -1192,6 +1247,12 @@ function parseCoordinatePdfPages(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function hasBkuIdentity(text: string): boolean {
+  return /\bbuku\s+kas\s+umum\b|\bsaldo\s+(?:bank|tunai)\b|\bnpsn\b/i.test(
+    text,
+  );
 }
 
 function resultFromCoordinatePdf(
@@ -1298,6 +1359,7 @@ async function parsePdfWithFallback(
 ): Promise<BkuParseResult> {
   let unpdfResult: BkuParseResult | null = null;
   let unpdfError: unknown;
+  let unpdfText = "";
 
   try {
     const extracted = await extractTextItems(Uint8Array.from(fileBuffer));
@@ -1305,6 +1367,7 @@ async function parsePdfWithFallback(
     const lines = pageRows.flatMap((rows) =>
       rows.map((row) => row.items.map((item) => item.str).join(" ")),
     );
+    unpdfText = lines.join("\n");
     const textResult = parsePdfLines(lines);
     unpdfResult = resultFromCoordinatePdf(
       extracted.items,
@@ -1320,6 +1383,7 @@ async function parsePdfWithFallback(
         mergePages: false,
       });
       const pages = Array.isArray(result.text) ? result.text : [result.text];
+      unpdfText = pages.join("\n");
       unpdfResult = chooseBetterParseResult(
         unpdfResult,
         parsePdfLines(pages.join("\n").split(/\r?\n/)),
@@ -1327,6 +1391,14 @@ async function parsePdfWithFallback(
     } catch (error) {
       unpdfError ??= error;
     }
+  }
+
+  if (
+    unpdfResult?.transactions.length === 0 &&
+    unpdfResult.metadata.audit?.expectedPengeluaran === 0 &&
+    hasBkuIdentity(unpdfText)
+  ) {
+    return unpdfResult;
   }
 
   if (
@@ -1339,15 +1411,23 @@ async function parsePdfWithFallback(
 
   let driveResult: BkuParseResult | null = null;
   let driveError: unknown;
+  let driveText = "";
   try {
-    const text = await extractPdfTextViaGoogleDrive(fileBuffer, fileName);
-    driveResult = parsePdfLines(text.split(/\r?\n/));
+    driveText = await extractPdfTextViaGoogleDrive(fileBuffer, fileName);
+    driveResult = parsePdfLines(driveText.split(/\r?\n/));
   } catch (error) {
     driveError = error;
   }
 
   const selected = chooseBetterParseResult(unpdfResult, driveResult);
   if (selected && selected.transactions.length > 0) {
+    return selected;
+  }
+  if (
+    selected &&
+    selected.transactions.length === 0 &&
+    hasBkuIdentity(`${unpdfText}\n${driveText}`)
+  ) {
     return selected;
   }
 

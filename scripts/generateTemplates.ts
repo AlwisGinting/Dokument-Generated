@@ -540,7 +540,7 @@ function barangPages(logo: Buffer, includePrices: boolean): (Paragraph | Table)[
 
 function receiptPage(): Paragraph[] {
   return [
-    paragraph("KWITANSI PEMBELIAN / PEMBAYARAN", {
+    paragraph("{judul_kwitansi}", {
       alignment: AlignmentType.CENTER,
       bold: true,
       underline: true,

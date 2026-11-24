@@ -52,6 +52,8 @@ interface ParseResponse {
   audit?: BkuAudit | null;
   period?: string;
   files?: string[];
+  skippedFiles?: string[];
+  zeroExpenseFileCount?: number;
   transactions: BkuTransaction[];
   parts: SpjPart[];
   error?: string;
@@ -639,8 +641,11 @@ export default function DashboardPage() {
       setPeriod(nextPeriod);
       setYear(result.metadata.tahun ? String(result.metadata.tahun) : "");
       setLetterPlace(result.metadata.kabupaten ?? selectedSchool?.kabupaten ?? "");
+      const skippedCount =
+        result.skippedFiles?.length ?? result.zeroExpenseFileCount ?? 0;
+      const checkedCount = result.files?.length ?? bkuFiles.length;
       setGeneratorNotice(
-        `${result.files?.length ?? bkuFiles.length} file digabung: ${result.transactions.length} transaksi diperiksa dan ${result.parts.length} Part disiapkan.`,
+        `${checkedCount} file diperiksa${skippedCount > 0 ? ` (${skippedCount} file nihil pengeluaran dilewati)` : ""}: ${result.transactions.length} transaksi ditemukan dan ${result.parts.length} Part disiapkan.`,
       );
     } catch (parseError) {
       setGeneratorError(
@@ -674,6 +679,7 @@ export default function DashboardPage() {
       id: `manual-${crypto.randomUUID()}`,
       kode_part: `MANUAL-${String(ordinal).padStart(3, "0")}`,
       is_barang: isBarang,
+      kategori_bku: category,
       kategori_toko: isBarang ? "ATK" : null,
       bulan_alokasi: month,
       tanggal_transaksi: tanggal,
@@ -901,6 +907,13 @@ export default function DashboardPage() {
   const summaryTotal =
     metadata?.total_pengeluaran ??
     parts.reduce((total, part) => total + part.total_part, 0);
+  const auditNeedsReview = Boolean(
+    metadata?.audit &&
+      !metadata.audit.verified &&
+      (transactions.length > 0 ||
+        metadata.audit.expectedPengeluaran !== null ||
+        metadata.audit.balanceMismatchCount > 0),
+  );
 
   return (
     <div className="space-y-7">
@@ -1244,7 +1257,7 @@ export default function DashboardPage() {
                 title="Tinjau dan edit Part"
                 description="Penjual dari Master Penjual diisi otomatis berdasarkan kategori; Anda tetap dapat mengubahnya."
               />
-              {metadata?.audit && !metadata.audit.verified ? (
+              {auditNeedsReview && metadata?.audit ? (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                   <AlertTriangle className="mt-0.5 shrink-0" size={16} />
                   <p>
@@ -1450,18 +1463,16 @@ export default function DashboardPage() {
                 {formatCurrency(summaryTotal)}
               </p>
               <p className="mt-1 text-xs text-slate-500">Total pengeluaran terdeteksi</p>
-              {metadata?.audit ? (
-                metadata.audit.verified ? (
+              {metadata?.audit?.verified ? (
                   <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800">
                     <CheckCircle2 size={14} />
                     Terverifikasi sesuai total BKU
                   </p>
-                ) : (
+              ) : auditNeedsReview ? (
                   <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-900">
                     <AlertTriangle size={14} />
                     Perlu ditinjau pengguna
                   </p>
-                )
               ) : null}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-emerald-50 p-3">

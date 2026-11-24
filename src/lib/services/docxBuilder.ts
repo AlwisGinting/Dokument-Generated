@@ -42,6 +42,24 @@ function formatNumber(value: number | null | undefined): string {
   return new Intl.NumberFormat("id-ID").format(value);
 }
 
+function formatQuantity(value: string): string {
+  const quantity = value.trim();
+  if (/^\d+(?:[.,]\d+)?$/.test(quantity)) {
+    return quantity;
+  }
+  if (/^bagian\s+\d+(?:\s+dari\s+\d+)?$/i.test(quantity)) {
+    return "1";
+  }
+  throw new Error("Kuantitas barang harus berupa angka.");
+}
+
+function cleanItemName(value: string): string {
+  return value
+    .replace(/\s*\(bagian\s+\d+\)\s*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function fileSafeName(value: string): string {
   const safe = value
     .normalize("NFD")
@@ -246,9 +264,15 @@ export async function buildLpjDocuments(
   const parts = input.parts.map((part, index) => ({
     ...part,
     is_first_part: index === 0,
+    judul_kwitansi:
+      part.kategori_bku === "HONOR_GURU"
+        ? "KWITANSI PEMBAYARAN HONORARIUM"
+        : "KWITANSI PEMBELIAN / PEMBAYARAN",
     total_part: formatNumber(part.total_part),
     items: part.items.map((item) => ({
       ...item,
+      nama_barang: cleanItemName(item.nama_barang),
+      banyaknya: formatQuantity(item.banyaknya),
       harga_satuan: formatNumber(item.harga_satuan),
       jumlah_harga: formatNumber(item.jumlah_harga),
     })),

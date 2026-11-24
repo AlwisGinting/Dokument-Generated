@@ -93,6 +93,7 @@ export interface SpjPart {
   id: string;
   kode_part: string;
   is_barang: boolean;
+  kategori_bku?: BkuCategory;
   kategori_toko: VendorCategory | null;
   bulan_alokasi: string;
   tanggal_transaksi: string;

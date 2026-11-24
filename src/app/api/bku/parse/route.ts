@@ -75,6 +75,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const batch = mergeBkuParseResults(parsedFiles);
+    const skippedFiles = files
+      .filter((_, index) => parsedFiles[index]?.transactions.length === 0)
+      .map((file) => file.name);
     const vendors = await listVendors(authenticated.accessToken);
     const transactions = classifyTransactions(batch.transactions);
     const vendorByCategory = new Map<VendorCategory, Vendor>();
@@ -99,6 +102,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       audit: batch.metadata.audit ?? null,
       period: batch.period,
       files: files.map((file) => file.name),
+      skippedFiles,
+      zeroExpenseFileCount: batch.zeroExpenseFileCount,
       transactions,
       parts,
     });

@@ -16,8 +16,6 @@ interface ExpandedItem {
   transaction: BkuTransaction;
   sourceIndex: number;
   amountCents: number;
-  chunkIndex: number;
-  chunkCount: number;
 }
 
 type SplitUnit =
@@ -94,18 +92,12 @@ function toSpjItem(
   transaction: BkuTransaction,
   no: number,
   amountCents = toCents(transaction.pengeluaran),
-  chunkIndex = 0,
-  chunkCount = 1,
 ): SpjItem {
-  const description =
-    chunkCount > 1
-      ? `${transaction.uraian} (bagian ${chunkIndex + 1})`
-      : transaction.uraian;
   return {
     no,
-    nama_barang: description.trim(),
+    nama_barang: transaction.uraian.trim(),
     diantar: transaction.tanggal,
-    banyaknya: chunkCount > 1 ? `Bagian ${chunkIndex + 1} dari ${chunkCount}` : "1",
+    banyaknya: "1",
     harga_satuan: fromCents(amountCents),
     jumlah_harga: fromCents(amountCents),
   };
@@ -132,6 +124,7 @@ function buildPart(
     id: `spj-${dateCode}-${code}`,
     kode_part: code,
     is_barang: first.kategori === "BELANJA_BARANG",
+    kategori_bku: first.kategori,
     kategori_toko: category,
     bulan_alokasi: bulanAlokasi,
     tanggal_transaksi: first.tanggal,
@@ -152,16 +145,13 @@ function expandOversizedItems(entries: readonly IndexedTransaction[]): ExpandedI
       continue;
     }
 
-    const chunkCount = Math.ceil(cents / MAX_BARANG_PART_CENTS);
     let remaining = cents;
-    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    while (remaining > 0) {
       const amountCents = Math.min(remaining, MAX_BARANG_PART_CENTS);
       expanded.push({
         transaction: entry.transaction,
         sourceIndex: entry.sourceIndex,
         amountCents,
-        chunkIndex,
-        chunkCount,
       });
       remaining -= amountCents;
     }
@@ -174,8 +164,7 @@ function packFirstFitDecreasing(entries: readonly IndexedTransaction[]): Expande
   const items = expandOversizedItems(entries).sort(
     (left, right) =>
       right.amountCents - left.amountCents ||
-      left.sourceIndex - right.sourceIndex ||
-      left.chunkIndex - right.chunkIndex,
+      left.sourceIndex - right.sourceIndex,
   );
   const bins: Array<{ amountCents: number; items: ExpandedItem[] }> = [];
 
@@ -193,11 +182,7 @@ function packFirstFitDecreasing(entries: readonly IndexedTransaction[]): Expande
   }
 
   return bins.map((bin) =>
-    bin.items.sort(
-      (left, right) =>
-        left.sourceIndex - right.sourceIndex ||
-        left.chunkIndex - right.chunkIndex,
-    ),
+    bin.items.sort((left, right) => left.sourceIndex - right.sourceIndex),
   );
 }
 
@@ -230,7 +215,7 @@ function makeSplitUnits(transactions: readonly BkuTransaction[]): SplitUnit[] {
   const consumed = new Set<number>();
   const units: SplitUnit[] = [];
   for (const group of duplicateGroups.values()) {
-    if (group.length < 2) {
+    if (group.length < 2 || group[0].transaction.kategori === "HONOR_GURU") {
       continue;
     }
     group.forEach(({ sourceIndex }) => consumed.add(sourceIndex));
@@ -239,7 +224,10 @@ function makeSplitUnits(transactions: readonly BkuTransaction[]): SplitUnit[] {
       sourceIndex: group[0].sourceIndex,
       parts: group.map((entry, index) => ({
         transaction: entry.transaction,
-        bulan: `Bulan ${index + 1}`,
+        bulan:
+          entry.transaction.kategori === "UTILITAS"
+            ? `Bulan ${index + 1}`
+            : monthForTransaction(entry.transaction),
       })),
     });
   }
@@ -302,8 +290,6 @@ export function splitTransactionsIntoSpjParts(
                 item.transaction,
                 index + 1,
                 item.amountCents,
-                item.chunkIndex,
-                item.chunkCount,
               ),
             );
             parts.push(
@@ -341,8 +327,6 @@ export function splitTransactionsIntoSpjParts(
           item.transaction,
           index + 1,
           item.amountCents,
-          item.chunkIndex,
-          item.chunkCount,
         ),
       );
       const totalCents = bin.reduce((total, item) => total + item.amountCents, 0);

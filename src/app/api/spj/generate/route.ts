@@ -16,6 +16,7 @@ import {
   updateSchoolProfile,
 } from "@/lib/services/supabaseClient";
 import type {
+  BkuCategory,
   BkuMetadata,
   SchoolProfile,
   SpjItem,
@@ -94,6 +95,14 @@ function isVendorCategory(value: unknown): value is VendorCategory {
   );
 }
 
+function isBkuCategory(value: unknown): value is BkuCategory {
+  return (
+    value === "BELANJA_BARANG" ||
+    value === "UTILITAS" ||
+    value === "HONOR_GURU"
+  );
+}
+
 function isSpjItem(value: unknown): value is SpjItem {
   return (
     isRecord(value) &&
@@ -114,6 +123,7 @@ function isSpjPart(value: unknown): value is SpjPart {
     typeof value.id === "string" &&
     typeof value.kode_part === "string" &&
     typeof value.is_barang === "boolean" &&
+    (value.kategori_bku === undefined || isBkuCategory(value.kategori_bku)) &&
     (value.kategori_toko === null || isVendorCategory(value.kategori_toko)) &&
     typeof value.bulan_alokasi === "string" &&
     typeof value.tanggal_transaksi === "string" &&
