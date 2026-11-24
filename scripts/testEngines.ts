@@ -197,6 +197,96 @@ async function testBkuPdfParsing(): Promise<void> {
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
 }
 
+async function testArkasMultilinePdfParsing(): Promise<void> {
+  const document = await PDFDocument.create();
+  const page = document.addPage([792, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const lines = [
+    "Periode: Mei 2026",
+    "Buku Kas Umum",
+    "Tanggal Kode Kegiatan Kode Rekening No Bukti Uraian Penerimaan Pengeluaran Saldo",
+    "13-05-2026 01.03.02 5.1.02.02.0024",
+    "BPU-2026-001 Pembelian alat tulis kantor",
+    "Penerimaan: 0",
+    "Pengeluaran: 1.250.000,00",
+    "Saldo: 5.000.000,00",
+    "Halaman 1",
+    "2026-05-14 01.03.02 5.1.02.02.0024",
+    "BPU/2026/002 Pembelian kertas dan tinta",
+    "0 250.000,00 4.750.000,00",
+    "15/05/2026 01.03.02 5.1.02.02.0024",
+    "BPU-2026-003 Pembelian buku gambar",
+    "Penerimaan 0 Pengeluaran 500.000 Saldo 4.250.000",
+    "Jumlah: 0 2.000.000 4.250.000",
+    "Saldo Akhir: 4.250.000",
+  ];
+  lines.forEach((text, index) => {
+    page.drawText(text, {
+      x: 48,
+      y: 748 - index * 18,
+      size: 9,
+      font,
+    });
+  });
+
+  const parsed = await parseBkuFile(
+    Buffer.from(await document.save()),
+    "bku-arkas-multiline.pdf",
+  );
+  assert.equal(parsed.transactions.length, 3);
+  assert.deepEqual(
+    parsed.transactions.map(({ tanggal }) => tanggal),
+    ["2026-05-13", "2026-05-14", "2026-05-15"],
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ no_bukti }) => no_bukti),
+    ["BPU-2026-001", "BPU/2026/002", "BPU-2026-003"],
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ uraian }) => uraian),
+    [
+      "Pembelian alat tulis kantor",
+      "Pembelian kertas dan tinta",
+      "Pembelian buku gambar",
+    ],
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ pengeluaran }) => pengeluaran),
+    [1_250_000, 250_000, 500_000],
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ saldo }) => saldo),
+    [5_000_000, 4_750_000, 4_250_000],
+  );
+}
+
+function testManualPartValidation(): void {
+  const manualUtility: SpjPart = {
+    id: "manual-utilitas",
+    kode_part: "MANUAL-001",
+    is_barang: false,
+    kategori_toko: null,
+    bulan_alokasi: "Mei",
+    tanggal_transaksi: "2026-05-01",
+    nama_penjual: "",
+    alamat_penjual: "",
+    uraian_singkat: "",
+    items: [],
+    total_part: 0,
+  };
+  assert.ok(validateSpjParts([manualUtility]).length > 0);
+  assert.deepEqual(
+    validateSpjParts([
+      {
+        ...manualUtility,
+        uraian_singkat: "Tagihan listrik",
+        total_part: 75_000,
+      },
+    ]),
+    [],
+  );
+}
+
 async function testDocxBuilder(): Promise<void> {
   const schoolProfile: SchoolProfile = {
     id: "school-1",
@@ -472,6 +562,8 @@ async function main(): Promise<void> {
   await testBkuXlsxParsing();
   await testAnnualAndMonthlyBkuBatch();
   await testBkuPdfParsing();
+  await testArkasMultilinePdfParsing();
+  testManualPartValidation();
   await testDocxBuilder();
   console.log("Engine tests passed: parsing, classification, splitting, Rupiah wording, DOCX generation, and Excel fit-to-page.");
 }

@@ -9,7 +9,7 @@ import {
   Scissors,
   Trash2,
 } from "lucide-react";
-import type { SpjItem, SpjPart } from "@/lib/types/lpj";
+import type { BkuCategory, SpjItem, SpjPart } from "@/lib/types/lpj";
 import {
   MAX_PART_TOTAL,
   validateSpjParts,
@@ -20,6 +20,7 @@ export { MAX_PART_TOTAL, validateSpjParts };
 interface SmartPartEditorProps {
   parts: SpjPart[];
   onChange: (parts: SpjPart[]) => void;
+  onAddManualPart: (category: BkuCategory) => void;
   disabled?: boolean;
 }
 
@@ -44,10 +45,13 @@ function renumber(items: SpjItem[]): SpjItem[] {
 export default function SmartPartEditor({
   parts,
   onChange,
+  onAddManualPart,
   disabled = false,
 }: SmartPartEditorProps) {
   const [moveTargets, setMoveTargets] = useState<Record<number, number>>({});
   const [error, setError] = useState<string | null>(null);
+  const [manualCategory, setManualCategory] =
+    useState<BkuCategory>("BELANJA_BARANG");
 
   const issues = useMemo(() => validateSpjParts(parts), [parts]);
 
@@ -176,7 +180,7 @@ export default function SmartPartEditor({
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-slate-950">
             Smart Part Editor
@@ -185,9 +189,41 @@ export default function SmartPartEditor({
             Tinjau alokasi bulan, penjual, dan rincian sebelum dokumen dibuat.
           </p>
         </div>
-        <p className="text-xs font-medium text-slate-500">
-          {parts.length} Part · batas belanja barang Rp 1.000.000 / Part
-        </p>
+        <div className="flex flex-col gap-2 sm:items-end">
+          <p className="text-xs font-medium text-slate-500">
+            {parts.length} Part · batas belanja barang Rp 1.000.000 / Part
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <select
+              aria-label="Jenis Part manual"
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 sm:flex-none"
+              disabled={disabled}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (
+                  value === "BELANJA_BARANG" ||
+                  value === "UTILITAS" ||
+                  value === "HONOR_GURU"
+                ) {
+                  setManualCategory(value);
+                }
+              }}
+              value={manualCategory}
+            >
+              <option value="BELANJA_BARANG">Belanja barang</option>
+              <option value="UTILITAS">Utilitas</option>
+              <option value="HONOR_GURU">Honor guru</option>
+            </select>
+            <button
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={disabled}
+              onClick={() => onAddManualPart(manualCategory)}
+              type="button"
+            >
+              + Tambah Transaksi / Part Manual
+            </button>
+          </div>
+        </div>
       </div>
 
       {error ? (
@@ -208,7 +244,7 @@ export default function SmartPartEditor({
 
       {parts.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-          Belum ada Part. Unggah file BKU untuk menyusun draft otomatis.
+          Belum ada Part. Parse BKU atau tambahkan transaksi manual.
         </div>
       ) : (
         <div className="space-y-3">
@@ -473,9 +509,44 @@ export default function SmartPartEditor({
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 px-4 py-4 text-xs text-slate-500 sm:px-5">
-                    <FileText size={15} className="text-sky-700" />
-                    {part.uraian_singkat} · kuitansi kosong · nominal tidak dipecah
+                  <div className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_220px] sm:px-5">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Uraian transaksi
+                      </span>
+                      <input
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
+                        disabled={disabled}
+                        onChange={(event) =>
+                          updatePart(partIndex, { uraian_singkat: event.target.value })
+                        }
+                        placeholder="Contoh: Tagihan listrik bulan Mei"
+                        value={part.uraian_singkat}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold text-slate-600">
+                        Nominal (Rp)
+                      </span>
+                      <input
+                        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
+                        disabled={disabled}
+                        min="0"
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          updatePart(partIndex, {
+                            total_part: Number.isFinite(value) ? value : 0,
+                          });
+                        }}
+                        step="1"
+                        type="number"
+                        value={part.total_part}
+                      />
+                    </label>
+                    <p className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
+                      <FileText size={15} className="shrink-0 text-sky-700" />
+                      Kuitansi kosong · nominal tidak dipecah
+                    </p>
                   </div>
                 )}
               </article>

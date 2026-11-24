@@ -119,6 +119,16 @@ function normalizeDate(value: CellValue): string {
   }
 
   const raw = cellText(value);
+  const isoDate = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoDate) {
+    const [, yearText, monthText, dayText] = isoDate;
+    const month = Number(monthText);
+    const day = Number(dayText);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${yearText}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
   const localDate = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
   if (localDate) {
     const [, dayText, monthText, yearText] = localDate;
@@ -311,6 +321,235 @@ function parsePdfFallbackLines(lines: readonly string[]): DataRow[] {
     .filter((row) => row.length > 1);
 }
 
+const PDF_TRANSACTION_DATE =
+  /^\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})(?=\s|$)/;
+const PDF_MONEY_TOKEN = "(?:Rp\\.?\\s*)?\\(?-?\\d[\\d.,]*\\)?";
+
+function isRepeatedPdfLine(line: string): boolean {
+  const normalized = normalize(line);
+  return (
+    !normalized ||
+    /\bbuku kas umum\b/.test(normalized) ||
+    /^halaman\b/.test(normalized) ||
+    /^(?:jumlah|saldo awal|saldo akhir)\b/.test(normalized) ||
+    /^(?:tanggal|kode kegiatan|kode rekening|no bukti|uraian|penerimaan|pengeluaran|saldo)\b/.test(
+      normalized,
+    )
+  );
+}
+
+function containsBkuDottedCode(line: string): boolean {
+  return Array.from(line.matchAll(/\b\d+(?:\.\d+){1,}\b/g), (match) => match[0])
+    .some((value) => {
+      if (/^5(?:\.\d+){3,}$/.test(value)) {
+        return true;
+      }
+      const segments = value.split(".");
+      const lastSegment = segments.at(-1) ?? "";
+      return (
+        segments.length >= 3 &&
+        segments.slice(1, -1).every((segment) => segment.length <= 2) &&
+        lastSegment.length <= 3
+      );
+    });
+}
+
+function trailingPdfAmounts(
+  line: string,
+): { values: [number, number, number]; start: number } | null {
+  const pattern = new RegExp(
+    `(?:^|\\s)(${PDF_MONEY_TOKEN})\\s+(${PDF_MONEY_TOKEN})\\s+(${PDF_MONEY_TOKEN})\\s*$`,
+    "i",
+  );
+  const match = line.match(pattern);
+  if (!match || match.index === undefined) {
+    return null;
+  }
+  return {
+    values: [
+      parseMoney(match[1]),
+      parseMoney(match[2]),
+      parseMoney(match[3]),
+    ],
+    start: match.index + (/\s/.test(match[0][0]) ? 1 : 0),
+  };
+}
+
+function standalonePdfMoneyValues(line: string): number[] {
+  if (
+    PDF_TRANSACTION_DATE.test(line) ||
+    containsBkuDottedCode(line) ||
+    /\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+/i.test(line)
+  ) {
+    return [];
+  }
+
+  const withoutCurrency = line.replace(/Rp\.?/gi, "");
+  const matches = Array.from(withoutCurrency.matchAll(/-?\d[\d.,]*/g));
+  if (matches.length === 0) {
+    return [];
+  }
+  const remaining = withoutCurrency
+    .replace(/-?\d[\d.,]*/g, "")
+    .replace(/\b(?:penerimaan|pengeluaran|saldo)\b/gi, "")
+    .replace(/[\s:|;()[\]-]/g, "");
+  return remaining.length === 0
+    ? matches.map((match) => parseMoney(match[0]))
+    : [];
+}
+
+function amountsFromPdfBlock(
+  lines: readonly string[],
+): [number, number, number] | null {
+  let pendingValues: number[] = [];
+
+  for (const line of lines) {
+    const trailingAmounts = trailingPdfAmounts(line);
+    if (trailingAmounts && trailingAmounts.values[1] > 0) {
+      return trailingAmounts.values;
+    }
+
+    const values = standalonePdfMoneyValues(line);
+    if (values.length === 0) {
+      pendingValues = [];
+      continue;
+    }
+    pendingValues.push(...values);
+    if (pendingValues.length >= 3) {
+      const candidate = pendingValues.slice(-3) as [number, number, number];
+      if (candidate[1] > 0) {
+        return candidate;
+      }
+      pendingValues = pendingValues.slice(-2);
+    }
+  }
+  return null;
+}
+
+function parsePdfTransactionBlock(
+  dateText: string,
+  lines: readonly string[],
+): UnclassifiedBkuTransaction | null {
+  const amounts = amountsFromPdfBlock(lines);
+  if (!amounts || amounts[1] <= 0) {
+    return null;
+  }
+
+  const blockText = lines.join(" ");
+  const codeSource = lines
+    .map((line) => {
+      const trailingAmounts = trailingPdfAmounts(line);
+      return trailingAmounts ? line.slice(0, trailingAmounts.start) : line;
+    })
+    .filter(
+      (line) =>
+        !isRepeatedPdfLine(line) && standalonePdfMoneyValues(line).length === 0,
+    )
+    .join(" ");
+  const accountCodes = Array.from(
+    codeSource.matchAll(/\b\d+(?:\.\d+){1,}\b/g),
+    (match) => match[0],
+  );
+  const accountCode =
+    accountCodes.find((code) => /^5(?:\.\d+)+$/.test(code)) ??
+    accountCodes.at(-1) ??
+    "";
+  const activityCode = accountCodes.find((code) => code !== accountCode) ?? "";
+  const firstLineRemainder = lines[0]?.replace(PDF_TRANSACTION_DATE, "").trim() ?? "";
+  const shortActivityCode =
+    accountCode && !activityCode
+      ? firstLineRemainder.match(/^(\d{1,3})(?=\s|$)/)?.[1] ?? ""
+      : "";
+  const kodeKegiatan = activityCode || shortActivityCode;
+  const proofCode =
+    blockText.match(
+      /\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/i,
+    )?.[0] ??
+    blockText.match(/\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+\b/i)?.[0] ??
+    "";
+
+  const description = lines
+    .map((rawLine, index) => {
+      let line = rawLine;
+      if (index === 0) {
+        line = line.replace(PDF_TRANSACTION_DATE, " ");
+      }
+      if (isRepeatedPdfLine(line)) {
+        return "";
+      }
+
+      const trailingAmounts = trailingPdfAmounts(line);
+      if (trailingAmounts) {
+        line = line.slice(0, trailingAmounts.start);
+      } else if (standalonePdfMoneyValues(line).length > 0) {
+        return "";
+      }
+
+      line = line
+        .replace(/\bBuku Kas Umum\b/gi, " ")
+        .replace(/\bHalaman\s+\d+(?:\s+dari\s+\d+)?\b/gi, " ")
+        .replace(/\b\d+(?:\.\d+){1,}\b/g, " ")
+        .replace(/\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/gi, " ")
+        .replace(/\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+\b/gi, " ");
+      if (kodeKegiatan && /^\d{1,3}$/.test(kodeKegiatan)) {
+        line = line.replace(new RegExp(`^\\s*${kodeKegiatan}\\b`), " ");
+      }
+      return line.replace(/\s+/g, " ").trim();
+    })
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!description || isSummaryRow(description, amounts[1])) {
+    return null;
+  }
+
+  const tanggal = normalizeDate(dateText);
+  return {
+    tanggal,
+    bulan: monthNameFromDate(tanggal),
+    kode_kegiatan: kodeKegiatan,
+    kode_rekening: accountCode,
+    no_bukti: proofCode,
+    uraian: description,
+    penerimaan: amounts[0],
+    pengeluaran: amounts[1],
+    saldo: amounts[2],
+  };
+}
+
+function parseMultilinePdfTransactions(
+  lines: readonly string[],
+): UnclassifiedBkuTransaction[] {
+  const transactions: UnclassifiedBkuTransaction[] = [];
+  let dateText: string | null = null;
+  let blockLines: string[] = [];
+
+  const finishBlock = () => {
+    if (!dateText) {
+      return;
+    }
+    const transaction = parsePdfTransactionBlock(dateText, blockLines);
+    if (transaction) {
+      transactions.push(transaction);
+    }
+  };
+
+  for (const line of lines) {
+    const dateMatch = line.match(PDF_TRANSACTION_DATE);
+    if (dateMatch) {
+      finishBlock();
+      dateText = dateMatch[1];
+      blockLines = [line];
+    } else if (dateText) {
+      blockLines.push(line);
+    }
+  }
+  finishBlock();
+  return transactions;
+}
+
 function parsePlainPdfLines(lines: readonly string[]): UnclassifiedBkuTransaction[] {
   const headerIndex = lines.findIndex((line) => {
     const header = normalize(line);
@@ -379,9 +618,13 @@ function parsePdfLines(lines: readonly string[]): {
   );
   const metadata = { ...EMPTY_METADATA, ...metadataFromRows(rows) };
   const hasTabularText = lines.some((line) => line.includes("\t"));
-  const transactions = hasTabularText
-    ? parseTableRows(rows)
-    : parsePlainPdfLines(lines);
+  const multilineTransactions = parseMultilinePdfTransactions(lines);
+  const transactions =
+    multilineTransactions.length > 0
+      ? multilineTransactions
+      : hasTabularText
+        ? parseTableRows(rows)
+        : parsePlainPdfLines(lines);
   const fallbackRows =
     transactions.length === 0 && hasTabularText
       ? parsePdfFallbackLines(lines)

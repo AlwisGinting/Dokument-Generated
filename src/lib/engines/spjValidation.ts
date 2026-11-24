@@ -10,6 +10,12 @@ export function validateSpjParts(parts: readonly SpjPart[]): string[] {
       if (part.items.length > 0) {
         issues.push(`${part.kode_part}: kuitansi utilitas/honor tidak boleh memiliki rincian barang.`);
       }
+      if (!part.uraian_singkat.trim()) {
+        issues.push(`${part.kode_part}: uraian transaksi wajib diisi.`);
+      }
+      if (!Number.isFinite(part.total_part) || part.total_part <= 0) {
+        issues.push(`${part.kode_part}: nominal transaksi harus lebih dari nol.`);
+      }
       continue;
     }
 
@@ -34,10 +40,10 @@ export function validateSpjParts(parts: readonly SpjPart[]): string[] {
           !Number.isFinite(item.harga_satuan) ||
           !Number.isFinite(item.jumlah_harga) ||
           item.harga_satuan < 0 ||
-          item.jumlah_harga < 0,
+          item.jumlah_harga <= 0,
       )
     ) {
-      issues.push(`${part.kode_part}: nama barang dan nominal rincian harus valid.`);
+      issues.push(`${part.kode_part}: nama barang dan nominal rincian harus valid dan lebih dari nol.`);
     }
   }
 

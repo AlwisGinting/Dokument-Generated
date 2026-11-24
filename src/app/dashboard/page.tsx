@@ -34,6 +34,7 @@ import SchoolLogoField from "@/components/SchoolLogoField";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 import type {
+  BkuCategory,
   BkuMetadata,
   BkuTransaction,
   SchoolProfile,
@@ -105,6 +106,21 @@ const blankQuickSchool = (): QuickSchoolDraft => ({
   no_hp: "",
   logo_data_url: null,
 });
+
+const MANUAL_MONTH_NAMES = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -625,6 +641,78 @@ export default function DashboardPage() {
     }
   }
 
+  function addManualPart(category: BkuCategory) {
+    const now = new Date();
+    const fallbackYear = String(now.getFullYear());
+    const manualYear = /^\d{4}$/.test(year.trim()) ? year.trim() : fallbackYear;
+    const periodMonthIndex = MANUAL_MONTH_NAMES.findIndex((month) =>
+      period.toLocaleLowerCase().includes(month.toLocaleLowerCase()),
+    );
+    const monthIndex = periodMonthIndex >= 0 ? periodMonthIndex : now.getMonth();
+    const month = MANUAL_MONTH_NAMES[monthIndex] ?? MANUAL_MONTH_NAMES[0];
+    const tanggal = `${manualYear}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+    const ordinal = parts.length + 1;
+    const isBarang = category === "BELANJA_BARANG";
+    const uraian =
+      category === "UTILITAS"
+        ? "Utilitas manual"
+        : category === "HONOR_GURU"
+          ? "Honor guru manual"
+          : "Transaksi barang manual";
+
+    const manualPart: SpjPart = {
+      id: `manual-${crypto.randomUUID()}`,
+      kode_part: `MANUAL-${String(ordinal).padStart(3, "0")}`,
+      is_barang: isBarang,
+      kategori_toko: isBarang ? "ATK" : null,
+      bulan_alokasi: month,
+      tanggal_transaksi: tanggal,
+      nama_penjual: "",
+      alamat_penjual: "",
+      uraian_singkat: uraian,
+      items: isBarang
+        ? [
+            {
+              no: 1,
+              nama_barang: "",
+              diantar: tanggal,
+              banyaknya: "1",
+              harga_satuan: 0,
+              jumlah_harga: 0,
+            },
+          ]
+        : [],
+      total_part: 0,
+    };
+
+    setParts((current) => [...current, manualPart]);
+    setMetadata((current) => ({
+      ...(current ?? {
+        bulan: month,
+        tahun: Number(manualYear),
+        npsn: selectedSchool?.npsn ?? null,
+        nama_sekolah: selectedSchool?.nama_sekolah ?? null,
+        kecamatan: selectedSchool?.kecamatan ?? null,
+        kabupaten: selectedSchool?.kabupaten ?? null,
+        provinsi: selectedSchool?.provinsi ?? null,
+        saldo_awal: null,
+        total_penerimaan: null,
+        saldo_akhir: null,
+        total_pengeluaran: null,
+      }),
+      total_pengeluaran: null,
+    }));
+    setYear((current) =>
+      /^\d{4}$/.test(current.trim()) ? current.trim() : manualYear,
+    );
+    setPeriod((current) => current.trim() || `${month} ${manualYear}`);
+    setGeneratorError(null);
+    setGenerationResult(null);
+    setGeneratorNotice(
+      "Part manual ditambahkan. Lengkapi uraian dan nominal sebelum generate.",
+    );
+  }
+
   async function createQuickSchool(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!quickSchool.nama_sekolah.trim()) {
@@ -1128,7 +1216,12 @@ export default function DashboardPage() {
                 title="Tinjau dan edit Part"
                 description="Penjual dari Master Penjual diisi otomatis berdasarkan kategori; Anda tetap dapat mengubahnya."
               />
-              <SmartPartEditor parts={parts} onChange={setParts} disabled={generating} />
+              <SmartPartEditor
+                parts={parts}
+                onChange={setParts}
+                onAddManualPart={addManualPart}
+                disabled={generating}
+              />
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
