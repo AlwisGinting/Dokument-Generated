@@ -49,19 +49,16 @@ export interface Database {
 
 let client: SupabaseClient<Database, "public"> | undefined;
 
-function requiredEnvironmentValue(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Variabel lingkungan ${name} belum dikonfigurasi.`);
-  }
-  return value;
-}
-
 export function getSupabaseClient(
   accessToken?: string,
 ): SupabaseClient<Database, "public"> {
-  const url = requiredEnvironmentValue("NEXT_PUBLIC_SUPABASE_URL");
-  const anonKey = requiredEnvironmentValue("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  if (!url || !anonKey) {
+    throw new Error(
+      "Variabel lingkungan NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY harus dikonfigurasi.",
+    );
+  }
   if (accessToken) {
     return createClient<Database, "public">(url, anonKey, {
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
