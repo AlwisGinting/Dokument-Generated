@@ -1,9 +1,14 @@
-import { extractText } from "unpdf";
+import {
+  extractText,
+  extractTextItems,
+  type StructuredTextItem,
+} from "unpdf";
 import { extractPdfTextViaGoogleDrive } from "@/lib/services/googleDriveService";
 import * as XLSX from "xlsx";
 import type {
   BkuMetadata,
   BkuParseResult,
+  BkuAudit,
   UnclassifiedBkuTransaction,
 } from "@/lib/types/lpj";
 
@@ -541,7 +546,8 @@ function parsePdfTransactionBlock(
     .toLocaleLowerCase("id-ID")
     .replace(/(^|[\s/-])([\p{L}\d])/gu, (_match, separator: string, initial: string) =>
       `${separator}${initial.toLocaleUpperCase("id-ID")}`,
-    );
+    )
+    .replace(/\bWifi\b/g, "WiFi");
 
   if (!description || isSummaryRow(description, amounts[1])) {
     return null;
@@ -667,6 +673,84 @@ function parsePlainPdfLines(lines: readonly string[]): UnclassifiedBkuTransactio
   return transactions;
 }
 
+function expectedPengeluaranFromLines(
+  lines: readonly string[],
+  reportedTotal: number | null,
+): number | null {
+  for (const line of lines) {
+    if (!/^jumlah\b/.test(normalize(line))) {
+      continue;
+    }
+    const amounts = trailingPdfAmounts(line);
+    if (amounts) {
+      return amounts.values[1];
+    }
+    const values = standalonePdfMoneyValues(line);
+    if (values.length >= 2) {
+      return values[1];
+    }
+    if (values.length === 1) {
+      return values[0];
+    }
+  }
+  return reportedTotal;
+}
+
+function detectedPengeluaran(
+  transactions: readonly UnclassifiedBkuTransaction[],
+): number {
+  return Math.round(
+    transactions.reduce((total, transaction) => total + transaction.pengeluaran, 0) *
+      100,
+  ) / 100;
+}
+
+function countRunningBalanceMismatches(
+  transactions: readonly UnclassifiedBkuTransaction[],
+  openingBalance: number | null,
+): number {
+  let previousBalance = openingBalance;
+  let mismatchCount = 0;
+  for (const transaction of transactions) {
+    if (previousBalance === null) {
+      previousBalance =
+        transaction.saldo -
+        transaction.penerimaan +
+        transaction.pengeluaran;
+    }
+    const calculatedBalance =
+      previousBalance + transaction.penerimaan - transaction.pengeluaran;
+    if (Math.abs(calculatedBalance - transaction.saldo) > 1) {
+      mismatchCount += 1;
+    }
+    previousBalance = transaction.saldo;
+  }
+  return mismatchCount;
+}
+
+function createBkuAudit(
+  transactions: readonly UnclassifiedBkuTransaction[],
+  expectedPengeluaran: number | null,
+  balanceMismatchCount: number,
+): BkuAudit {
+  const detected = detectedPengeluaran(transactions);
+  const difference =
+    expectedPengeluaran === null
+      ? null
+      : Math.round(Math.abs(expectedPengeluaran - detected) * 100) / 100;
+  return {
+    expectedPengeluaran,
+    detectedPengeluaran: detected,
+    difference,
+    balanceMismatchCount,
+    verified:
+      transactions.length > 0 &&
+      expectedPengeluaran !== null &&
+      difference === 0 &&
+      balanceMismatchCount === 0,
+  };
+}
+
 function parsePdfLines(lines: readonly string[]): {
   metadata: BkuMetadata;
   transactions: UnclassifiedBkuTransaction[];
@@ -691,74 +775,580 @@ function parsePdfLines(lines: readonly string[]): {
     fallbackRows.length > 0 ? parseTableRows(fallbackRows) : [];
   const parsedTransactions =
     transactions.length > 0 ? transactions : fallbackTransactions;
+  const reportedTotal = metadata.total_pengeluaran;
+  const expectedPengeluaran = expectedPengeluaranFromLines(
+    lines,
+    reportedTotal,
+  );
+  const balanceMismatchCount = countRunningBalanceMismatches(
+    parsedTransactions,
+    metadata.saldo_awal,
+  );
+  const audit = createBkuAudit(
+    parsedTransactions,
+    expectedPengeluaran,
+    balanceMismatchCount,
+  );
 
   return {
     metadata: {
       ...metadata,
       total_pengeluaran:
-        metadata.total_pengeluaran ??
-        (parsedTransactions.length > 0
-          ? parsedTransactions.reduce(
-              (total, transaction) => total + transaction.pengeluaran,
-              0,
-            )
-          : null),
+        parsedTransactions.length > 0
+          ? audit.detectedPengeluaran
+          : reportedTotal,
+      audit,
     },
     transactions: parsedTransactions,
   };
 }
 
-function parsedMetadataCount(metadata: BkuMetadata): number {
-  return Object.values(metadata).filter((value) => value !== null).length;
+type CoordinateColumn =
+  | "tanggal"
+  | "kode_kegiatan"
+  | "kode_rekening"
+  | "no_bukti"
+  | "uraian"
+  | "penerimaan"
+  | "pengeluaran"
+  | "saldo";
+
+type PdfTextRow = {
+  y: number;
+  items: StructuredTextItem[];
+};
+
+type PdfColumnAnchors = Partial<Record<CoordinateColumn, number>>;
+
+interface CoordinateTransaction {
+  transaction: UnclassifiedBkuTransaction;
+  hasBalance: boolean;
+}
+
+interface CoordinatePdfParse {
+  transactions: UnclassifiedBkuTransaction[];
+  expectedPengeluaran: number | null;
+  saldoAwal: number | null;
+  balanceMismatchCount: number;
+}
+
+interface PendingCoordinateTransaction {
+  tanggal: string;
+  kodeKegiatan: string[];
+  kodeRekening: string[];
+  noBukti: string[];
+  uraian: string[];
+  penerimaan: number | null;
+  pengeluaran: number | null;
+  saldo: number | null;
+}
+
+function groupPdfTextRows(items: readonly StructuredTextItem[]): PdfTextRow[] {
+  const sortedItems = items
+    .filter((item) => item.str.trim())
+    .slice()
+    .sort((left, right) => right.y - left.y || left.x - right.x);
+  const rows: PdfTextRow[] = [];
+
+  for (const item of sortedItems) {
+    let target: PdfTextRow | undefined;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = rows[index];
+      if (candidate.y < item.y - 4) {
+        break;
+      }
+      if (Math.abs(candidate.y - item.y) <= 4) {
+        target = candidate;
+        break;
+      }
+    }
+
+    if (target) {
+      target.items.push(item);
+      target.y =
+        target.items.reduce((total, current) => total + current.y, 0) /
+        target.items.length;
+    } else {
+      rows.push({ y: item.y, items: [item] });
+    }
+  }
+
+  return rows
+    .map((row) => ({
+      ...row,
+      items: row.items.slice().sort((left, right) => left.x - right.x),
+    }))
+    .sort((left, right) => right.y - left.y);
+}
+
+function headerAnchor(
+  items: readonly StructuredTextItem[],
+  pattern: RegExp,
+): number | undefined {
+  for (let start = 0; start < items.length; start += 1) {
+    for (let count = 1; count <= 4 && start + count <= items.length; count += 1) {
+      const fragments = items.slice(start, start + count);
+      if (!pattern.test(normalize(fragments.map((item) => item.str).join(" ")))) {
+        continue;
+      }
+      const left = Math.min(...fragments.map((item) => item.x));
+      const right = Math.max(
+        ...fragments.map((item) => item.x + item.width),
+      );
+      return (left + right) / 2;
+    }
+  }
+  return undefined;
+}
+
+function detectPdfColumnAnchors(row: PdfTextRow): PdfColumnAnchors | null {
+  const anchors: PdfColumnAnchors = {
+    tanggal: headerAnchor(row.items, /\btanggal\b/),
+    kode_kegiatan: headerAnchor(row.items, /\bkode\s+kegiatan\b/),
+    kode_rekening: headerAnchor(row.items, /\bkode\s+rekening\b/),
+    no_bukti: headerAnchor(row.items, /\b(?:no\s+bukti|nomor\s+bukti|bukti)\b/),
+    uraian: headerAnchor(row.items, /\b(?:uraian|keterangan|keperluan)\b/),
+    penerimaan: headerAnchor(row.items, /\b(?:penerimaan|kredit)\b/),
+    pengeluaran: headerAnchor(row.items, /\b(?:pengeluaran|debit|belanja)\b/),
+    saldo: headerAnchor(row.items, /\bsaldo\b/),
+  };
+  if (
+    anchors.tanggal === undefined ||
+    anchors.uraian === undefined ||
+    anchors.penerimaan === undefined ||
+    anchors.pengeluaran === undefined ||
+    anchors.saldo === undefined
+  ) {
+    return null;
+  }
+  return anchors;
+}
+
+function coordinateCells(
+  row: PdfTextRow,
+  anchors: PdfColumnAnchors,
+): Partial<Record<CoordinateColumn, StructuredTextItem[]>> {
+  const knownAnchors = Object.entries(anchors).filter(
+    (entry): entry is [CoordinateColumn, number] =>
+      typeof entry[1] === "number",
+  );
+  const cells: Partial<Record<CoordinateColumn, StructuredTextItem[]>> = {};
+  for (const item of row.items) {
+    const center = item.x + item.width / 2;
+    const [column] = knownAnchors.reduce(
+      (nearest, current) =>
+        Math.abs(current[1] - center) < Math.abs(nearest[1] - center)
+          ? current
+          : nearest,
+    );
+    (cells[column] ??= []).push(item);
+  }
+  return cells;
+}
+
+function coordinateCellText(
+  items: readonly StructuredTextItem[] | undefined,
+): string {
+  return (items ?? [])
+    .slice()
+    .sort((left, right) => left.x - right.x)
+    .map((item) => item.str.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function coordinateCellMoney(
+  items: readonly StructuredTextItem[] | undefined,
+): number | null {
+  if (!items?.length) {
+    return null;
+  }
+  const sorted = items.slice().sort((left, right) => left.x - right.x);
+  const fragments: string[] = [];
+  let previous: StructuredTextItem | undefined;
+  for (const item of sorted) {
+    const text = item.str.trim();
+    if (!text) {
+      continue;
+    }
+    const gap = previous
+      ? item.x - (previous.x + previous.width)
+      : Number.POSITIVE_INFINITY;
+    if (previous && gap <= 4) {
+      fragments[fragments.length - 1] += text;
+    } else {
+      fragments.push(text);
+    }
+    previous = item;
+  }
+  const value = fragments.join(" ").replace(/\s*([.,])\s*/g, "$1");
+  if (!/^(?:Rp\.?\s*)?\(?-?\d[\d.,]*\)?$/i.test(value)) {
+    return null;
+  }
+  return parseMoney(value);
+}
+
+function dateFromCoordinateCell(value: string): string | null {
+  const compact = value.replace(/\s*([/-])\s*/g, "$1");
+  const match = compact.match(
+    /\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b/,
+  );
+  if (!match) {
+    return null;
+  }
+  const normalized = normalizeDate(match[0]);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : null;
+}
+
+function cleanCoordinateDescription(value: string): string {
+  return value
+    .replace(/\b(?:BNU|BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/gi, " ")
+    .replace(PDF_DOTTED_CODE, " ")
+    .replace(/^\s*(?:(?:pembelian\s+barang|pembelian|pengadaan|belanja)\b[\s:,-]*)+/i, "")
+    .replace(/^\s*(?:uraian|keterangan|nama barang)\s*[:=-]\s*/i, "")
+    .replace(/[\s,;:|/-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("id-ID")
+    .replace(/(^|[\s/-])([\p{L}\d])/gu, (_match, separator: string, initial: string) =>
+      `${separator}${initial.toLocaleUpperCase("id-ID")}`,
+    )
+    .replace(/\bWifi\b/g, "WiFi");
+}
+
+function coordinateRowBalanceMismatches(
+  transactions: readonly CoordinateTransaction[],
+  openingBalance: number | null,
+): number {
+  let previousBalance = openingBalance;
+  let unverifiedMovement = 0;
+  let mismatches = 0;
+  for (const { transaction, hasBalance } of transactions) {
+    unverifiedMovement += transaction.penerimaan - transaction.pengeluaran;
+    if (!hasBalance) {
+      continue;
+    }
+    if (previousBalance === null) {
+      previousBalance = transaction.saldo - unverifiedMovement;
+    } else if (Math.abs(previousBalance + unverifiedMovement - transaction.saldo) > 1) {
+      mismatches += 1;
+    }
+    previousBalance = transaction.saldo;
+    unverifiedMovement = 0;
+  }
+  return mismatches;
+}
+
+function parseCoordinatePdfPages(
+  pages: readonly (readonly StructuredTextItem[])[],
+  fallbackOpeningBalance: number | null,
+): CoordinatePdfParse {
+  const transactions: CoordinateTransaction[] = [];
+  let anchors: PdfColumnAnchors | null = null;
+  let pending: PendingCoordinateTransaction | null = null;
+  let expectedPengeluaran: number | null = null;
+  let saldoAwal = fallbackOpeningBalance;
+
+  const finishPending = () => {
+    if (!pending) {
+      return;
+    }
+    const uraian = cleanCoordinateDescription(pending.uraian.join(" "));
+    const pengeluaran = pending.pengeluaran ?? 0;
+    if (uraian && pengeluaran > 0) {
+      const tanggal = normalizeDate(pending.tanggal);
+      transactions.push({
+        transaction: {
+          tanggal,
+          bulan: monthNameFromDate(tanggal),
+          kode_kegiatan: pending.kodeKegiatan.join("").replace(/\s+/g, ""),
+          kode_rekening: pending.kodeRekening.join("").replace(/\s+/g, ""),
+          no_bukti: pending.noBukti.join("").replace(/\s+/g, ""),
+          uraian,
+          penerimaan: pending.penerimaan ?? 0,
+          pengeluaran,
+          saldo: pending.saldo ?? 0,
+        },
+        hasBalance: pending.saldo !== null,
+      });
+    }
+    pending = null;
+  };
+
+  for (const page of pages) {
+    for (const row of groupPdfTextRows(page)) {
+      const rowText = row.items.map((item) => item.str).join(" ");
+      if (PDF_BOOK_CLOSED.test(rowText)) {
+        finishPending();
+        return {
+          transactions: transactions.map(({ transaction }) => transaction),
+          expectedPengeluaran,
+          saldoAwal,
+          balanceMismatchCount: coordinateRowBalanceMismatches(
+            transactions,
+            saldoAwal,
+          ),
+        };
+      }
+
+      const detectedAnchors = detectPdfColumnAnchors(row);
+      if (detectedAnchors) {
+        anchors = detectedAnchors;
+        continue;
+      }
+      if (!anchors) {
+        continue;
+      }
+
+      const cells = coordinateCells(row, anchors);
+      const text = coordinateCellText(row.items);
+      const normalizedRow = normalize(text);
+      const expenseCell = coordinateCellMoney(cells.pengeluaran);
+      if (/^jumlah\b/.test(normalizedRow)) {
+        finishPending();
+        if (expenseCell !== null) {
+          expectedPengeluaran = expenseCell;
+        }
+        continue;
+      }
+      if (/^saldo awal\b/.test(normalizedRow)) {
+        const opening = coordinateCellMoney(cells.saldo);
+        if (opening !== null) {
+          saldoAwal = opening;
+        }
+        continue;
+      }
+      if (
+        /^(?:saldo bank|saldo tunai|saldo akhir|bunga bank|pajak bunga)\b/.test(
+          normalizedRow,
+        ) ||
+        isRepeatedPdfLine(text) ||
+        PDF_BLOCK_FOOTER.test(text)
+      ) {
+        finishPending();
+        continue;
+      }
+
+      const dateText =
+        dateFromCoordinateCell(coordinateCellText(cells.tanggal)) ??
+        dateFromCoordinateCell(text);
+      if (dateText) {
+        finishPending();
+        pending = {
+          tanggal: dateText,
+          kodeKegiatan: [],
+          kodeRekening: [],
+          noBukti: [],
+          uraian: [],
+          penerimaan: null,
+          pengeluaran: null,
+          saldo: null,
+        };
+      }
+      if (!pending) {
+        continue;
+      }
+
+      const pushCell = (
+        target: string[],
+        column: CoordinateColumn,
+      ) => {
+        const value = coordinateCellText(cells[column]);
+        if (value) {
+          target.push(value);
+        }
+      };
+      pushCell(pending.kodeKegiatan, "kode_kegiatan");
+      pushCell(pending.kodeRekening, "kode_rekening");
+      pushCell(pending.noBukti, "no_bukti");
+      pushCell(pending.uraian, "uraian");
+
+      const receipt = coordinateCellMoney(cells.penerimaan);
+      if (receipt !== null) {
+        pending.penerimaan = receipt;
+      }
+      if (expenseCell !== null) {
+        pending.pengeluaran = expenseCell;
+      }
+      const balance = coordinateCellMoney(cells.saldo);
+      if (balance !== null) {
+        pending.saldo = balance;
+      }
+    }
+  }
+  finishPending();
+  return {
+    transactions: transactions.map(({ transaction }) => transaction),
+    expectedPengeluaran,
+    saldoAwal,
+    balanceMismatchCount: coordinateRowBalanceMismatches(
+      transactions,
+      saldoAwal,
+    ),
+  };
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function resultFromCoordinatePdf(
+  pages: readonly (readonly StructuredTextItem[])[],
+  baseResult: BkuParseResult,
+): BkuParseResult {
+  const coordinate = parseCoordinatePdfPages(
+    pages,
+    baseResult.metadata.saldo_awal,
+  );
+  const coordinateAudit = createBkuAudit(
+    coordinate.transactions,
+    coordinate.expectedPengeluaran ??
+      baseResult.metadata.audit?.expectedPengeluaran ??
+      null,
+    coordinate.balanceMismatchCount,
+  );
+  const coordinateResult: BkuParseResult = {
+    metadata: {
+      ...baseResult.metadata,
+      saldo_awal: coordinate.saldoAwal,
+      total_pengeluaran:
+        coordinate.transactions.length > 0
+          ? coordinateAudit.detectedPengeluaran
+          : baseResult.metadata.total_pengeluaran,
+      audit: coordinateAudit,
+    },
+    transactions: coordinate.transactions,
+  };
+  const baseAudit = baseResult.metadata.audit;
+
+  if (coordinateResult.transactions.length === 0) {
+    return baseResult;
+  }
+  if (baseResult.transactions.length === 0) {
+    return coordinateResult;
+  }
+  if (coordinateAudit.verified !== baseAudit?.verified) {
+    return coordinateAudit.verified ? coordinateResult : baseResult;
+  }
+
+  const coordinateDifference = coordinateAudit.difference ?? Number.POSITIVE_INFINITY;
+  const baseDifference = baseAudit?.difference ?? Number.POSITIVE_INFINITY;
+  if (coordinateDifference !== baseDifference) {
+    return coordinateDifference < baseDifference ? coordinateResult : baseResult;
+  }
+  if (coordinateAudit.balanceMismatchCount !== baseAudit?.balanceMismatchCount) {
+    return coordinateAudit.balanceMismatchCount <
+      (baseAudit?.balanceMismatchCount ?? Number.POSITIVE_INFINITY)
+      ? coordinateResult
+      : baseResult;
+  }
+  return coordinateResult.transactions.length >= baseResult.transactions.length
+    ? coordinateResult
+    : baseResult;
+}
+
+function shouldUseGoogleDriveFallback(result: BkuParseResult): boolean {
+  const audit = result.metadata.audit;
+  return (
+    result.transactions.length === 0 ||
+    (audit?.difference !== null &&
+      audit?.difference !== undefined &&
+      audit.difference > 1_000) ||
+    (audit?.balanceMismatchCount ?? 0) > 0
+  );
+}
+
+function chooseBetterParseResult(
+  preferred: BkuParseResult | null,
+  candidate: BkuParseResult | null,
+): BkuParseResult | null {
+  if (!preferred) {
+    return candidate;
+  }
+  if (!candidate) {
+    return preferred;
+  }
+  if (candidate.metadata.audit?.verified !== preferred.metadata.audit?.verified) {
+    return candidate.metadata.audit?.verified ? candidate : preferred;
+  }
+  const preferredDifference =
+    preferred.metadata.audit?.difference ?? Number.POSITIVE_INFINITY;
+  const candidateDifference =
+    candidate.metadata.audit?.difference ?? Number.POSITIVE_INFINITY;
+  if (candidateDifference !== preferredDifference) {
+    return candidateDifference < preferredDifference ? candidate : preferred;
+  }
+  const preferredMismatches =
+    preferred.metadata.audit?.balanceMismatchCount ?? Number.POSITIVE_INFINITY;
+  const candidateMismatches =
+    candidate.metadata.audit?.balanceMismatchCount ?? Number.POSITIVE_INFINITY;
+  if (candidateMismatches !== preferredMismatches) {
+    return candidateMismatches < preferredMismatches ? candidate : preferred;
+  }
+  return candidate.transactions.length > preferred.transactions.length
+    ? candidate
+    : preferred;
+}
+
 async function parsePdfWithFallback(
   fileBuffer: Buffer,
   fileName: string,
-): Promise<{
-  metadata: BkuMetadata;
-  transactions: UnclassifiedBkuTransaction[];
-}> {
-  let unpdfResult: ReturnType<typeof parsePdfLines> | null = null;
+): Promise<BkuParseResult> {
+  let unpdfResult: BkuParseResult | null = null;
   let unpdfError: unknown;
 
   try {
-    const result = await extractText(Uint8Array.from(fileBuffer), {
-      mergePages: false,
-    });
-    const pages = Array.isArray(result.text) ? result.text : [result.text];
-    unpdfResult = parsePdfLines(pages.join("\n").split(/\r?\n/));
-    if (unpdfResult.transactions.length > 0) {
-      return unpdfResult;
-    }
+    const extracted = await extractTextItems(Uint8Array.from(fileBuffer));
+    const pageRows = extracted.items.map(groupPdfTextRows);
+    const lines = pageRows.flatMap((rows) =>
+      rows.map((row) => row.items.map((item) => item.str).join(" ")),
+    );
+    const textResult = parsePdfLines(lines);
+    unpdfResult = resultFromCoordinatePdf(
+      extracted.items,
+      textResult,
+    );
   } catch (error) {
     unpdfError = error;
   }
 
-  let driveResult: ReturnType<typeof parsePdfLines> | null = null;
+  if (!unpdfResult || unpdfResult.transactions.length === 0) {
+    try {
+      const result = await extractText(Uint8Array.from(fileBuffer), {
+        mergePages: false,
+      });
+      const pages = Array.isArray(result.text) ? result.text : [result.text];
+      unpdfResult = chooseBetterParseResult(
+        unpdfResult,
+        parsePdfLines(pages.join("\n").split(/\r?\n/)),
+      );
+    } catch (error) {
+      unpdfError ??= error;
+    }
+  }
+
+  if (
+    unpdfResult &&
+    unpdfResult.transactions.length > 0 &&
+    !shouldUseGoogleDriveFallback(unpdfResult)
+  ) {
+    return unpdfResult;
+  }
+
+  let driveResult: BkuParseResult | null = null;
   let driveError: unknown;
   try {
     const text = await extractPdfTextViaGoogleDrive(fileBuffer, fileName);
     driveResult = parsePdfLines(text.split(/\r?\n/));
-    if (driveResult.transactions.length > 0) {
-      return driveResult;
-    }
   } catch (error) {
     driveError = error;
   }
 
-  if (unpdfResult && driveResult) {
-    return parsedMetadataCount(unpdfResult.metadata) >=
-      parsedMetadataCount(driveResult.metadata)
-      ? unpdfResult
-      : driveResult;
-  }
-  if (driveResult) {
-    return driveResult;
+  const selected = chooseBetterParseResult(unpdfResult, driveResult);
+  if (selected && selected.transactions.length > 0) {
+    return selected;
   }
 
   throw new Error(
@@ -788,9 +1378,22 @@ export async function parseBkuFile(
       raw: true,
       defval: "",
     });
+    const metadata = { ...EMPTY_METADATA, ...metadataFromRows(rows) };
+    const transactions = parseTableRows(rows);
+    const expected = metadata.total_pengeluaran;
+    const audit = createBkuAudit(
+      transactions,
+      expected,
+      countRunningBalanceMismatches(transactions, metadata.saldo_awal),
+    );
     return {
-      metadata: { ...EMPTY_METADATA, ...metadataFromRows(rows) },
-      transactions: parseTableRows(rows),
+      metadata: {
+        ...metadata,
+        total_pengeluaran:
+          transactions.length > 0 ? audit.detectedPengeluaran : expected,
+        audit,
+      },
+      transactions,
     };
   }
 

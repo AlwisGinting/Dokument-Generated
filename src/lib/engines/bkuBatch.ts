@@ -1,4 +1,5 @@
 import type {
+  BkuAudit,
   BkuMetadata,
   BkuParseResult,
   UnclassifiedBkuTransaction,
@@ -245,6 +246,54 @@ export function mergeBkuParseResults(
           ) * 100,
         ) / 100
       : baseMetadata.total_pengeluaran;
+  const uniqueAuditResults = new Map<string, BkuAudit>();
+  let conflictingDuplicateAudit = false;
+  for (const result of results) {
+    const audit = result.metadata.audit;
+    if (!audit) {
+      continue;
+    }
+    const signature = result.transactions
+      .map(transactionKey)
+      .sort()
+      .join("|");
+    const existing = uniqueAuditResults.get(signature);
+    if (existing && existing.expectedPengeluaran !== audit.expectedPengeluaran) {
+      conflictingDuplicateAudit = true;
+    } else {
+      uniqueAuditResults.set(signature, audit);
+    }
+  }
+  const audits = [...uniqueAuditResults.values()];
+  const expectedComplete =
+    !conflictingDuplicateAudit &&
+    results.every((result) => result.metadata.audit != null) &&
+    audits.every((audit) => audit.expectedPengeluaran !== null);
+  const expectedPengeluaran = expectedComplete
+    ? audits.reduce(
+        (total, audit) => total + (audit.expectedPengeluaran ?? 0),
+        0,
+      )
+    : null;
+  const balanceMismatchCount = audits.reduce(
+    (total, audit) => total + audit.balanceMismatchCount,
+    0,
+  );
+  const difference =
+    expectedPengeluaran === null || totalPengeluaran === null
+      ? null
+      : Math.round(Math.abs(expectedPengeluaran - totalPengeluaran) * 100) / 100;
+  const audit: BkuAudit = {
+    expectedPengeluaran,
+    detectedPengeluaran: totalPengeluaran ?? 0,
+    difference,
+    balanceMismatchCount,
+    verified:
+      transactions.length > 0 &&
+      expectedPengeluaran !== null &&
+      difference === 0 &&
+      balanceMismatchCount === 0,
+  };
 
   return {
     metadata: {
@@ -252,6 +301,7 @@ export function mergeBkuParseResults(
       bulan,
       tahun,
       total_pengeluaran: totalPengeluaran,
+      audit,
     },
     period,
     transactions,

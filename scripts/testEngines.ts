@@ -65,7 +65,7 @@ async function testBkuXlsxParsing(): Promise<void> {
       "Pengeluaran",
       "Saldo",
     ],
-    ["15/01/2026", "01", "5.1.02.02.0024", "BKU-001", "Pembelian pensil", 0, 25_000, 1_475_000],
+    ["15/01/2026", "01", "5.1.02.02.0024", "BKU-001", "Pembelian pensil", 500_000, 25_000, 1_475_000],
     ["", "", "", "", "Bunga Bank", 10, 0, 1_475_010],
     ["", "", "", "", "Pajak Bunga", 0, 0, 1_475_010],
     ["", "", "", "", "Jumlah", 10, 25_000, 1_475_010],
@@ -83,6 +83,9 @@ async function testBkuXlsxParsing(): Promise<void> {
   assert.equal(parsed.transactions[0].bulan, "Januari");
   assert.equal(parsed.transactions[0].uraian, "Pembelian pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
+  assert.equal(parsed.metadata.audit?.expectedPengeluaran, 25_000);
+  assert.equal(parsed.metadata.audit?.detectedPengeluaran, 25_000);
+  assert.equal(parsed.metadata.audit?.verified, true);
 
   const adjusted = prepareExcelForPdf(file);
   const adjustedZip = new PizZip(adjusted);
@@ -273,6 +276,85 @@ async function testArkasMultilinePdfParsing(): Promise<void> {
   );
 }
 
+async function testCoordinateBasedBkuVariants(): Promise<void> {
+  const document = await PDFDocument.create();
+  const page = document.addPage([792, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const drawCellsInReverse = (
+    cells: Array<{ x: number; y: number; text: string }>,
+  ) => {
+    for (const cell of [...cells].reverse()) {
+      page.drawText(cell.text, {
+        x: cell.x,
+        y: cell.y,
+        size: 8,
+        font,
+      });
+    }
+  };
+  const columns = {
+    date: 35,
+    proof: 125,
+    description: 210,
+    receipt: 420,
+    expense: 515,
+    balance: 640,
+  };
+  drawCellsInReverse([
+    { x: columns.date, y: 690, text: "TANGGAL" },
+    { x: columns.proof, y: 690, text: "NO." },
+    { x: columns.proof + 20, y: 690, text: "BUKTI" },
+    { x: columns.description, y: 690, text: "URAIAN" },
+    { x: columns.receipt, y: 690, text: "PENERIMAAN" },
+    { x: columns.expense, y: 690, text: "PENGELUARAN" },
+    { x: columns.balance, y: 690, text: "SALDO" },
+    { x: columns.description, y: 670, text: "Saldo Awal" },
+    { x: columns.balance, y: 670, text: "1.000.000" },
+    { x: columns.date, y: 645, text: "01-05-2024" },
+    { x: columns.proof, y: 645, text: "BNU01" },
+    { x: columns.description, y: 645, text: "Pembelian" },
+    { x: columns.receipt, y: 645, text: "0" },
+    { x: columns.expense, y: 645, text: "340.000" },
+    { x: columns.balance, y: 645, text: "660.000" },
+    { x: columns.description, y: 627, text: "Bubur Kacang" },
+    { x: columns.description, y: 609, text: "Hijau" },
+    { x: columns.date, y: 585, text: "02-05-2024" },
+    { x: columns.proof, y: 585, text: "BNU02" },
+    { x: columns.description, y: 585, text: "Tagihan WiFi" },
+    { x: columns.receipt, y: 585, text: "100.000" },
+    { x: columns.expense, y: 585, text: "25.000" },
+    { x: columns.balance, y: 585, text: "735.000" },
+    { x: columns.description, y: 555, text: "Jumlah" },
+    { x: columns.receipt, y: 555, text: "100.000" },
+    { x: columns.expense, y: 555, text: "365.000" },
+    { x: columns.balance, y: 555, text: "735.000" },
+    { x: columns.date, y: 530, text: "Pada hari ini Buku Kas Umum Ditutup" },
+    { x: columns.date, y: 510, text: "03-05-2024" },
+    { x: columns.proof, y: 510, text: "BNU03" },
+    { x: columns.description, y: 510, text: "Harus diabaikan" },
+    { x: columns.receipt, y: 510, text: "0" },
+    { x: columns.expense, y: 510, text: "999.999" },
+    { x: columns.balance, y: 510, text: "0" },
+  ]);
+  const parsed = await parseBkuFile(
+    Buffer.from(await document.save()),
+    "bku-coordinate-random-order.pdf",
+  );
+  assert.equal(parsed.transactions.length, 2);
+  assert.deepEqual(
+    parsed.transactions.map(({ uraian }) => uraian),
+    ["Bubur Kacang Hijau", "Tagihan WiFi"],
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ pengeluaran }) => pengeluaran),
+    [340_000, 25_000],
+  );
+  assert.equal(parsed.metadata.audit?.expectedPengeluaran, 365_000);
+  assert.equal(parsed.metadata.audit?.detectedPengeluaran, 365_000);
+  assert.equal(parsed.metadata.audit?.balanceMismatchCount, 0);
+  assert.equal(parsed.metadata.audit?.verified, true);
+}
+
 async function testArkasMay2024EightColumnPdfParsing(): Promise<void> {
   const entries = [
     ["Tinta Printer", 340_000],
@@ -344,7 +426,7 @@ async function testArkasMay2024EightColumnPdfParsing(): Promise<void> {
     }
     if (start === 18) {
       lines.push(
-        "Jumlah",
+        `Jumlah 0 6.495.000 ${runningBalance.toLocaleString("id-ID")}`,
         "Pada hari ini tanggal 31 Mei 2024 Buku Kas Umum Ditutup",
         "31-05-2024 03.03.18. 5.1.02.01.01.00",
         "24 BNU99 Baris yang tidak boleh dibaca--",
@@ -367,6 +449,9 @@ async function testArkasMay2024EightColumnPdfParsing(): Promise<void> {
   );
   assert.equal(parsed.transactions.length, 26);
   assert.equal(parsed.metadata.total_pengeluaran, expectedTotal);
+  assert.equal(parsed.metadata.audit?.expectedPengeluaran, expectedTotal);
+  assert.equal(parsed.metadata.audit?.detectedPengeluaran, expectedTotal);
+  assert.equal(parsed.metadata.audit?.verified, true);
   assert.equal(
     parsed.transactions.reduce((total, item) => total + item.pengeluaran, 0),
     expectedTotal,
@@ -778,6 +863,7 @@ async function main(): Promise<void> {
   await testAnnualAndMonthlyBkuBatch();
   await testBkuPdfParsing();
   await testArkasMultilinePdfParsing();
+  await testCoordinateBasedBkuVariants();
   await testArkasMay2024EightColumnPdfParsing();
   testManualPartValidation();
   testGoogleDriveFolderIdParsing();

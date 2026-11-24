@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
   CloudUpload,
@@ -35,6 +36,7 @@ import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 import { extractGoogleDriveFolderId } from "@/lib/utils/googleDriveFolderId";
 import type {
+  BkuAudit,
   BkuCategory,
   BkuMetadata,
   BkuTransaction,
@@ -47,6 +49,7 @@ type DashboardTab = "generator" | "converter";
 
 interface ParseResponse {
   metadata: BkuMetadata;
+  audit?: BkuAudit | null;
   period?: string;
   files?: string[];
   transactions: BkuTransaction[];
@@ -623,7 +626,10 @@ export default function DashboardPage() {
         body: formData,
       });
       const result = await responseJson<ParseResponse>(response);
-      setMetadata(result.metadata);
+      setMetadata({
+        ...result.metadata,
+        audit: result.audit ?? result.metadata.audit ?? null,
+      });
       setTransactions(result.transactions);
       setParts(result.parts);
       const nextPeriod = result.period ||
@@ -705,6 +711,7 @@ export default function DashboardPage() {
         total_pengeluaran: null,
       }),
       total_pengeluaran: null,
+      audit: null,
     }));
     setYear((current) =>
       /^\d{4}$/.test(current.trim()) ? current.trim() : manualYear,
@@ -1237,6 +1244,20 @@ export default function DashboardPage() {
                 title="Tinjau dan edit Part"
                 description="Penjual dari Master Penjual diisi otomatis berdasarkan kategori; Anda tetap dapat mengubahnya."
               />
+              {metadata?.audit && !metadata.audit.verified ? (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <AlertTriangle className="mt-0.5 shrink-0" size={16} />
+                  <p>
+                    BKU perlu ditinjau sebelum generate.{" "}
+                    {metadata.audit.expectedPengeluaran === null
+                      ? "Total pada baris Jumlah belum terbaca."
+                      : `Total BKU ${formatCurrency(metadata.audit.expectedPengeluaran)}, sedangkan transaksi terdeteksi ${formatCurrency(metadata.audit.detectedPengeluaran)} (selisih ${formatCurrency(metadata.audit.difference ?? 0)}).`}
+                    {metadata.audit.balanceMismatchCount > 0
+                      ? ` Saldo berjalan tidak cocok pada ${metadata.audit.balanceMismatchCount} baris.`
+                      : ""}
+                  </p>
+                </div>
+              ) : null}
               <SmartPartEditor
                 parts={parts}
                 onChange={setParts}
@@ -1429,6 +1450,19 @@ export default function DashboardPage() {
                 {formatCurrency(summaryTotal)}
               </p>
               <p className="mt-1 text-xs text-slate-500">Total pengeluaran terdeteksi</p>
+              {metadata?.audit ? (
+                metadata.audit.verified ? (
+                  <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                    <CheckCircle2 size={14} />
+                    Terverifikasi sesuai total BKU
+                  </p>
+                ) : (
+                  <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-900">
+                    <AlertTriangle size={14} />
+                    Perlu ditinjau pengguna
+                  </p>
+                )
+              ) : null}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-emerald-50 p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Transaksi</p>

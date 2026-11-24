@@ -64,6 +64,15 @@ export interface BkuMetadata {
   total_penerimaan: number | null;
   total_pengeluaran: number | null;
   saldo_akhir: number | null;
+  audit?: BkuAudit | null;
+}
+
+export interface BkuAudit {
+  expectedPengeluaran: number | null;
+  detectedPengeluaran: number;
+  difference: number | null;
+  balanceMismatchCount: number;
+  verified: boolean;
 }
 
 export interface BkuParseResult {

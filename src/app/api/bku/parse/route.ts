@@ -96,6 +96,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({
       metadata: batch.metadata,
+      audit: batch.metadata.audit ?? null,
       period: batch.period,
       files: files.map((file) => file.name),
       transactions,
