@@ -6,14 +6,6 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/spj/generate": ["./public/templates/*.docx"],
   },
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
 };
 
 export default nextConfig;

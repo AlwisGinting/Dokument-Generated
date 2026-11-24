@@ -10,6 +10,7 @@ Next.js App Router application for deterministic BKU parsing, SPJ drafting, docu
 4. Enable Email/Password sign-in in Supabase Auth and enable the Google Drive API; configure OAuth credentials and a refresh token.
 5. Run `npm run dev`, then create an account from `/login`.
 
+The default PAUD logo is checked into `public/assets/logo_paud.png`. To recreate it if missing, run `npm run generate:logo`.
 The Google OAuth client secret and refresh token are server-only. Do not add real credentials to GitHub. Configure the same environment variables in the Vercel project settings before deployment.
 The SQL schema enables row-level security and assigns each school and vendor to the authenticated user. If applying it to an existing database, assign any legacy rows an owner through a trusted Supabase admin session before using them; rows without an owner remain inaccessible.
 

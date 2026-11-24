@@ -1,15 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { Building2, FileCheck2, LogOut, Settings2 } from "lucide-react";
+import { Building2, FileCheck2, LogOut } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { SessionProvider, useAuthSession } from "@/components/SessionProvider";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 
 const navigation = [
-  { href: "/dashboard", label: "Generator", icon: FileCheck2 },
-  { href: "/dashboard/profiles", label: "Profil & penjual", icon: Building2 },
+  { href: "/dashboard", label: "Generator LPJ & SPJ", shortLabel: "Generator", icon: FileCheck2 },
+  {
+    href: "/dashboard/profiles",
+    label: "Profil Sekolah & Penjual",
+    shortLabel: "Profil",
+    icon: Building2,
+  },
 ];
 
 function DashboardShell({ children }: { children: ReactNode }) {
@@ -38,9 +44,14 @@ function DashboardShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-30 border-b border-emerald-950/10 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
           <Link className="flex shrink-0 items-center gap-3" href="/dashboard">
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-800 text-white">
-              <Settings2 size={20} />
-            </span>
+            <Image
+              alt=""
+              className="h-10 w-10 rounded-xl object-cover"
+              height={40}
+              priority
+              src="/assets/logo_paud.png"
+              width={40}
+            />
             <span className="hidden sm:block">
               <span className="block text-sm font-bold tracking-tight text-slate-950">
                 PAUD LPJ Automation
@@ -51,14 +62,14 @@ function DashboardShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
 
-          <nav className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
-            {navigation.map(({ href, label, icon: Icon }) => {
+          <nav className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
+            {navigation.map(({ href, label, shortLabel, icon: Icon }) => {
               const active =
                 pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
               return (
                 <Link
                   aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${
+                  className={`flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-[11px] font-semibold transition sm:px-4 sm:text-sm ${
                     active
                       ? "bg-white text-emerald-900 shadow-sm"
                       : "text-slate-600 hover:text-slate-950"
@@ -67,7 +78,8 @@ function DashboardShell({ children }: { children: ReactNode }) {
                   key={href}
                 >
                   <Icon size={16} />
-                  <span className="hidden sm:inline">{label}</span>
+                  <span className="lg:hidden">{shortLabel}</span>
+                  <span className="hidden lg:inline">{label}</span>
                 </Link>
               );
             })}

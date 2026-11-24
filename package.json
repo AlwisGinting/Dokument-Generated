@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "generate:logo": "tsx scripts/generateLogo.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.2",
@@ -23,7 +24,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@tailwindcss/turbopack": "4.3.3",
+    "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^20",
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "^19",

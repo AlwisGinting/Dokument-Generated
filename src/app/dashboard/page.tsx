@@ -127,6 +127,65 @@ function formatCurrency(value: number | null | undefined): string {
   }).format(value);
 }
 
+interface PdfPreviewState {
+  source: string;
+  url?: string;
+  error?: string;
+}
+
+function usePdfObjectUrl(pdfBase64: string | null): PdfPreviewState | null {
+  const [preview, setPreview] = useState<PdfPreviewState | null>(null);
+
+  useEffect(() => {
+    if (!pdfBase64) {
+      return;
+    }
+
+    let active = true;
+    let objectUrl: string | null = null;
+    void Promise.resolve()
+      .then(() => {
+        const binary = window.atob(pdfBase64);
+        const buffer = new ArrayBuffer(binary.length);
+        const bytes = new Uint8Array(buffer);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return URL.createObjectURL(
+          new Blob([buffer], { type: "application/pdf" }),
+        );
+      })
+      .then((url) => {
+        if (!active) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setPreview({ source: pdfBase64, url });
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setPreview({
+            source: pdfBase64,
+            error:
+              error instanceof Error
+                ? `Pratinjau PDF gagal disiapkan: ${error.message}`
+                : "Pratinjau PDF gagal disiapkan.",
+          });
+        }
+      });
+
+    return () => {
+      active = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [pdfBase64]);
+
+  return pdfBase64 && preview?.source === pdfBase64 ? preview : null;
+}
+
 function fileSize(bytes: number): string {
   return bytes < 1024 * 1024
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -293,6 +352,8 @@ export default function DashboardPage() {
     [profiles, selectedSchoolId],
   );
   const partIssues = useMemo(() => validateSpjParts(parts), [parts]);
+  const generationPdf = usePdfObjectUrl(generationResult?.pdfBase64 ?? null);
+  const conversionPdf = usePdfObjectUrl(conversionResult?.pdfBase64 ?? null);
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -598,7 +659,7 @@ export default function DashboardPage() {
       </div>
 
       {tab === "generator" ? (
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
           <div className="min-w-0 space-y-6">
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <StepHeading
@@ -948,33 +1009,82 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                    <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-                      <p className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-                        <ReceiptText size={15} className="text-emerald-800" />
-                        Live PDF Preview
-                      </p>
-                      <a
-                        className="text-xs font-semibold text-emerald-800 hover:underline"
-                        href={generationResult.bundlePdfUrl}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        Buka di Drive
-                      </a>
-                    </div>
-                    <iframe
-                      className="h-[520px] w-full sm:h-[720px]"
-                      src={`data:application/pdf;base64,${generationResult.pdfBase64}`}
-                      title="Pratinjau bundel LPJ dan SPJ"
-                    />
-                  </div>
                 </div>
               ) : null}
             </section>
           </div>
 
-          <aside className="space-y-4 xl:sticky xl:top-24">
+          <aside className="space-y-4 lg:sticky lg:top-24">
+            <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <ReceiptText size={16} className="text-emerald-800" />
+                  Live PDF Preview
+                </p>
+                {generationResult ? (
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-800">
+                    Siap
+                  </span>
+                ) : null}
+              </div>
+              {generationResult ? (
+                <>
+                  {generationPdf?.url ? (
+                    <iframe
+                      className="h-[64vh] min-h-[420px] max-h-[840px] w-full bg-slate-100"
+                      src={generationPdf.url}
+                      title="Pratinjau bundel LPJ dan SPJ"
+                    />
+                  ) : (
+                    <div
+                      aria-live="polite"
+                      className="grid h-[420px] place-items-center bg-slate-50 p-6 text-center text-sm text-slate-500"
+                    >
+                      {generationPdf?.error ?? "Menyiapkan pratinjau PDF..."}
+                    </div>
+                  )}
+                  <div className="grid gap-2 border-t border-slate-100 p-3 sm:grid-cols-2">
+                    <a
+                      aria-disabled={!generationPdf?.url}
+                      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold ${
+                        generationPdf?.url
+                          ? "border-slate-200 text-slate-700 hover:bg-slate-50"
+                          : "pointer-events-none border-slate-100 text-slate-400"
+                      }`}
+                      href={generationPdf?.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <ExternalLink size={14} />
+                      Buka PDF di Tab Baru
+                    </a>
+                    <a
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-800 px-3 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900"
+                      href={generationResult.bundlePdfDownloadUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <Download size={14} />
+                      Download PDF
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <div className="grid min-h-[420px] place-items-center bg-slate-50 p-6 text-center">
+                  <div className="max-w-xs">
+                    <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-white text-emerald-800 shadow-sm">
+                      <FileCheck2 size={22} />
+                    </span>
+                    <p className="mt-4 text-sm font-semibold text-slate-800">
+                      Pratinjau bundel akan tampil di sini
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Unggah dan periksa BKU, lalu generate dokumen untuk melihat PDF.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </section>
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Ringkasan BKU</p>
               <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
@@ -1014,7 +1124,7 @@ export default function DashboardPage() {
           </aside>
         </div>
       ) : (
-        <div className="mx-auto max-w-4xl space-y-6">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
             <div className="mb-6">
               <p className="text-sm font-semibold text-emerald-700">Precision Converter</p>
@@ -1094,61 +1204,105 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          {conversionResult ? (
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:px-5">
-                <div>
-                  <h3 className="font-semibold text-slate-950">PDF berhasil dibuat</h3>
-                  <p className="mt-1 text-xs text-slate-500">
-                    File sumber dan hasil PDF tersedia di Google Drive.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
+          <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:sticky lg:top-24">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <ReceiptText size={16} className="text-emerald-800" />
+                  Live PDF Preview
+                </h3>
+                {conversionResult ? (
+                  <p className="mt-1 text-[11px] text-slate-500">PDF berhasil dibuat</p>
+                ) : null}
+              </div>
+              {conversionResult ? (
+                <a
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 hover:underline"
+                  href={conversionResult.folderUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <FolderOpen size={14} />
+                  Folder Drive
+                </a>
+              ) : null}
+            </div>
+            {conversionResult ? (
+              <>
+                {conversionPdf?.url ? (
+                  <iframe
+                    className="h-[64vh] min-h-[420px] max-h-[840px] w-full bg-slate-100"
+                    src={conversionPdf.url}
+                    title="Pratinjau hasil konversi PDF"
+                  />
+                ) : (
+                  <div
+                    aria-live="polite"
+                    className="grid h-[420px] place-items-center bg-slate-50 p-6 text-center text-sm text-slate-500"
+                  >
+                    {conversionPdf?.error ?? "Menyiapkan pratinjau PDF..."}
+                  </div>
+                )}
+                <div className="grid gap-2 border-t border-slate-100 p-3 sm:grid-cols-2">
                   <a
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    href={conversionResult.folderUrl}
+                    aria-disabled={!conversionPdf?.url}
+                    className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold ${
+                      conversionPdf?.url
+                        ? "border-slate-200 text-slate-700 hover:bg-slate-50"
+                        : "pointer-events-none border-slate-100 text-slate-400"
+                    }`}
+                    href={conversionPdf?.url}
                     rel="noreferrer"
                     target="_blank"
                   >
-                    <FolderOpen size={14} />
-                    Folder Drive
+                    <ExternalLink size={14} />
+                    Buka PDF di Tab Baru
                   </a>
                   <a
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900"
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-800 px-3 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900"
                     href={conversionResult.pdfDownloadUrl}
                     rel="noreferrer"
                     target="_blank"
                   >
                     <Download size={14} />
-                    Unduh PDF
+                    Download PDF
                   </a>
                 </div>
+                <div className="flex flex-wrap gap-4 border-t border-slate-100 px-4 py-3 text-xs">
+                  <a
+                    className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:text-emerald-800"
+                    href={conversionResult.sourceUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Buka file sumber <ExternalLink size={12} />
+                  </a>
+                  <a
+                    className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:text-emerald-800"
+                    href={conversionResult.pdfUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Buka PDF di Drive <ExternalLink size={12} />
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="grid min-h-[420px] place-items-center bg-slate-50 p-6 text-center">
+                <div className="max-w-xs">
+                  <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-white text-emerald-800 shadow-sm">
+                    <FileSpreadsheet size={22} />
+                  </span>
+                  <p className="mt-4 text-sm font-semibold text-slate-800">
+                    Pratinjau PDF akan tampil di sini
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Pilih dokumen Word atau Excel dan mulai konversi.
+                  </p>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-4 border-b border-slate-100 px-5 py-3 text-xs">
-                <a
-                  className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:text-emerald-800"
-                  href={conversionResult.sourceUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Buka file sumber <ExternalLink size={12} />
-                </a>
-                <a
-                  className="inline-flex items-center gap-1 font-semibold text-slate-600 hover:text-emerald-800"
-                  href={conversionResult.pdfUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  Buka PDF di Drive <ExternalLink size={12} />
-                </a>
-              </div>
-              <iframe
-                className="h-[620px] w-full bg-slate-100 sm:h-[780px]"
-                src={`data:application/pdf;base64,${conversionResult.pdfBase64}`}
-                title="Pratinjau hasil konversi PDF"
-              />
-            </section>
-          ) : null}
+            )}
+          </section>
         </div>
       )}
     </div>

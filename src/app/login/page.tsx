@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, KeyRound, Leaf, LoaderCircle, Mail } from "lucide-react";
+import { ArrowRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 
 type AuthMode = "login" | "signup";
@@ -82,15 +83,20 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f5f7f4] px-4 py-10">
+    <main className="flex min-h-dvh items-center justify-center bg-[#f5f7f4] px-4 py-10">
       <section className="grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-emerald-950/10 bg-white shadow-[0_30px_90px_-45px_rgba(16,54,34,0.35)] md:grid-cols-[1.05fr_0.95fr]">
         <div className="relative hidden min-h-[620px] flex-col justify-between overflow-hidden bg-[#173b2a] p-12 text-white md:flex">
           <div className="absolute -right-20 -top-20 h-80 w-80 rounded-full border border-white/10" />
           <div className="absolute -bottom-28 -left-20 h-96 w-96 rounded-full border border-white/10" />
           <div className="relative flex items-center gap-3">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-300 text-emerald-950">
-              <Leaf size={22} />
-            </span>
+            <Image
+              alt=""
+              className="h-11 w-11 rounded-2xl object-cover"
+              height={44}
+              priority
+              src="/assets/logo_paud.png"
+              width={44}
+            />
             <span className="font-semibold tracking-tight">PAUD LPJ Automation</span>
           </div>
           <div className="relative max-w-md">
@@ -111,9 +117,14 @@ export default function LoginPage() {
 
         <div className="flex min-h-[620px] flex-col justify-center p-6 sm:p-10 md:p-12">
           <div className="mb-9 flex items-center gap-3 md:hidden">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-100 text-emerald-800">
-              <Leaf size={22} />
-            </span>
+            <Image
+              alt=""
+              className="h-11 w-11 rounded-2xl object-cover"
+              height={44}
+              priority
+              src="/assets/logo_paud.png"
+              width={44}
+            />
             <span className="font-semibold tracking-tight text-slate-900">
               PAUD LPJ Automation
             </span>
