@@ -17,6 +17,8 @@ export interface StoredDriveFile {
   name: string;
   mimeType: string;
   url: string;
+  webViewLink: string;
+  downloadUrl: string;
   warning?: string;
 }
 
@@ -52,11 +54,15 @@ function requiredFileId(file: drive_v3.Schema$File, description: string): string
 
 function toStoredFile(file: drive_v3.Schema$File): StoredDriveFile {
   const id = requiredFileId(file, "file");
+  const webViewLink =
+    file.webViewLink ?? `https://drive.google.com/file/d/${id}/view`;
   return {
     id,
     name: file.name ?? id,
     mimeType: file.mimeType ?? "application/octet-stream",
-    url: file.webViewLink ?? `https://drive.google.com/file/d/${id}/view`,
+    url: webViewLink,
+    webViewLink,
+    downloadUrl: `https://drive.google.com/uc?export=download&id=${id}`,
   };
 }
 

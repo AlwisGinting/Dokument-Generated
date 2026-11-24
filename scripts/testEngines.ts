@@ -661,7 +661,13 @@ async function testDocxBuilder(): Promise<void> {
     tanggalSurat: "31 Januari 2026",
   });
   const defaultLogo = await readFile("public/assets/logo_paud.png");
-  assert.equal(documents.length, 4);
+  assert.equal(documents.length, 3 + parts.length);
+  const spjDocuments = documents.filter(
+    (document) => document.template === "template_spj_part.docx",
+  );
+  assert.equal(spjDocuments.length, parts.length);
+  assert.ok(spjDocuments[0].fileName.endsWith("_spj_part_01_toko_melati.docx"));
+  assert.ok(spjDocuments[1].fileName.endsWith("_spj_part_02_utilitas.docx"));
   for (const document of documents) {
     const zip = new PizZip(document.buffer);
     const xml = zip.file("word/document.xml")?.asText();
@@ -670,12 +676,15 @@ async function testDocxBuilder(): Promise<void> {
     assert.ok(logo?.equals(defaultLogo), `${document.fileName} contains the fallback logo`);
     assert.ok(!/\{[#/^]?[a-z_]+\}/i.test(xml), `${document.fileName} has no unresolved tags`);
     if (document.template === "template_spj_part.docx") {
-      assert.equal((xml.match(/w:type="page"/g) ?? []).length, 3);
-      assert.equal((xml.match(/PESANAN BARANG/g) ?? []).length, 1);
-      assert.equal((xml.match(/SURAT PENGANTAR BARANG/g) ?? []).length, 1);
-      assert.equal((xml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 2);
-      assert.ok(xml.indexOf("PESANAN BARANG") < xml.indexOf("SURAT PENGANTAR BARANG"));
-      assert.ok(xml.indexOf("SURAT PENGANTAR BARANG") < xml.indexOf("KWITANSI PEMBELIAN"));
+      const isGoodsPart = document.fileName.includes("_spj_part_01_");
+      assert.equal((xml.match(/w:type="page"/g) ?? []).length, isGoodsPart ? 2 : 0);
+      assert.equal((xml.match(/PESANAN BARANG/g) ?? []).length, isGoodsPart ? 1 : 0);
+      assert.equal((xml.match(/SURAT PENGANTAR BARANG/g) ?? []).length, isGoodsPart ? 1 : 0);
+      assert.equal((xml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 1);
+      if (isGoodsPart) {
+        assert.ok(xml.indexOf("PESANAN BARANG") < xml.indexOf("SURAT PENGANTAR BARANG"));
+        assert.ok(xml.indexOf("SURAT PENGANTAR BARANG") < xml.indexOf("KWITANSI PEMBELIAN"));
+      }
     }
     if (document.template === "template_cover.docx") {
       assert.ok(xml.includes("LAPORAN PERTANGGUNGJAWABAN DAN SPJ PAUD"));

@@ -24,7 +24,7 @@ The SQL schema enables row-level security and assigns each school and vendor to 
 ## API
 
 - `POST /api/bku/parse`: `multipart/form-data` with a `file` field (`.pdf` or `.xlsx`). Returns BKU metadata, classified transactions, and draft SPJ parts.
-- `POST /api/spj/generate`: JSON with `schoolProfile`, `metadata`, and `parts`; optional fields include the cover, letter, and background narrative values. Validates barang totals (maximum Rp 1.000.000 per Part), generates four DOCX files, exports and bundles their PDFs in Drive, records a generation log, and returns Drive URLs plus base64 PDF data.
+- `POST /api/spj/generate`: JSON with `schoolProfile`, `metadata`, and `parts`; optional fields include the cover, letter, and background narrative values. Validates barang totals (maximum Rp 1.000.000 per Part), generates the three main DOCX documents plus one DOCX per SPJ Part, uploads each DOCX and a ZIP archive to Google Drive, exports and bundles their PDFs, records a generation log, and returns direct download and Drive view links with a Drive-hosted PDF preview URL.
 - `POST /api/convert`: `multipart/form-data` with `file` (`.docx` or `.xlsx`), `school_id`, `tahun`, and `periode`. XLSX page setup is set to fit one page wide before Google Drive native PDF export.
 
 Uploads are limited to 4 MiB per request to fit the serverless request-size limit. Google Drive and Supabase credentials must be configured for the generation and conversion routes.

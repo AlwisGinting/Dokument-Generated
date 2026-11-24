@@ -62,6 +62,7 @@ interface ParseResponse {
 interface GeneratedFile {
   fileName: string;
   docxUrl: string;
+  driveWebViewLink: string;
   pdfUrl: string;
   docxDownloadUrl: string;
   pdfDownloadUrl: string;
@@ -70,9 +71,11 @@ interface GeneratedFile {
 interface GenerationResponse {
   success: boolean;
   bundlePdfUrl: string;
+  bundlePdfPreviewUrl: string;
   bundlePdfDownloadUrl: string;
+  bundleWordZipUrl: string;
+  bundleWordZipDownloadUrl: string;
   folderUrl: string;
-  pdfBase64: string;
   files: GeneratedFile[];
   warnings?: string[];
   error?: string;
@@ -520,7 +523,6 @@ export default function DashboardPage() {
     [profiles, selectedSchoolId],
   );
   const partIssues = useMemo(() => validateSpjParts(parts), [parts]);
-  const generationPdf = usePdfObjectUrl(generationResult?.pdfBase64 ?? null);
   const conversionPdf = usePdfObjectUrl(conversionResult?.pdfBase64 ?? null);
 
   const loadProfiles = useCallback(async () => {
@@ -1283,7 +1285,7 @@ export default function DashboardPage() {
               <StepHeading
                 number="4"
                 title="Generate, preview & sinkronkan"
-                description="Empat DOCX diisi, diekspor ke PDF native melalui Google Drive, lalu digabung menjadi satu bundel."
+                description="Dokumen utama dan DOCX untuk setiap Part diunggah ke Google Drive, diekspor ke PDF, lalu digabung menjadi satu bundel."
               />
               {generatorError ? (
                 <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
@@ -1334,15 +1336,26 @@ export default function DashboardPage() {
                         </a>
                       </div>
                     </div>
-                    <a
-                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-800 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900"
-                      href={generationResult.bundlePdfDownloadUrl}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      <Download size={15} />
-                      Unduh PDF bundel
-                    </a>
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-800 px-3.5 py-2.5 text-xs font-semibold text-white hover:bg-emerald-900"
+                        href={generationResult.bundlePdfDownloadUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <Download size={15} />
+                        Unduh Bundel PDF (.pdf)
+                      </a>
+                      <a
+                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-800 bg-white px-3.5 py-2.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
+                        href={generationResult.bundleWordZipDownloadUrl}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        <Download size={15} />
+                        Unduh Semua Word (.zip)
+                      </a>
+                    </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {generationResult.files.map((generatedFile) => (
@@ -1366,6 +1379,16 @@ export default function DashboardPage() {
                             title="Unduh DOCX"
                           >
                             <Download size={15} />
+                          </a>
+                          <a
+                            aria-label={`Buka ${generatedFile.fileName} di Google Drive`}
+                            className="rounded-lg p-2 text-slate-500 hover:bg-emerald-50 hover:text-emerald-800"
+                            href={generatedFile.driveWebViewLink}
+                            rel="noreferrer"
+                            target="_blank"
+                            title="Buka DOCX di Google Drive"
+                          >
+                            <FolderOpen size={15} />
                           </a>
                           <a
                             aria-label={`Buka PDF ${generatedFile.fileName}`}
@@ -1401,29 +1424,15 @@ export default function DashboardPage() {
               </div>
               {generationResult ? (
                 <>
-                  {generationPdf?.url ? (
-                    <iframe
-                      className="h-[64vh] min-h-[420px] max-h-[840px] w-full bg-slate-100"
-                      src={generationPdf.url}
-                      title="Pratinjau bundel LPJ dan SPJ"
-                    />
-                  ) : (
-                    <div
-                      aria-live="polite"
-                      className="grid h-[420px] place-items-center bg-slate-50 p-6 text-center text-sm text-slate-500"
-                    >
-                      {generationPdf?.error ?? "Menyiapkan pratinjau PDF..."}
-                    </div>
-                  )}
+                  <iframe
+                    className="h-[64vh] min-h-[420px] max-h-[840px] w-full bg-slate-100"
+                    src={generationResult.bundlePdfPreviewUrl}
+                    title="Pratinjau bundel LPJ dan SPJ"
+                  />
                   <div className="grid gap-2 border-t border-slate-100 p-3 sm:grid-cols-2">
                     <a
-                      aria-disabled={!generationPdf?.url}
-                      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold ${
-                        generationPdf?.url
-                          ? "border-slate-200 text-slate-700 hover:bg-slate-50"
-                          : "pointer-events-none border-slate-100 text-slate-400"
-                      }`}
-                      href={generationPdf?.url}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      href={generationResult.bundlePdfUrl}
                       rel="noreferrer"
                       target="_blank"
                     >

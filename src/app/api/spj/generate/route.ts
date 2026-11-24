@@ -1,4 +1,5 @@
 import { PDFDocument } from "pdf-lib";
+import PizZip from "pizzip";
 import { NextResponse } from "next/server";
 import { buildLpjDocuments } from "@/lib/services/docxBuilder";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
@@ -274,6 +275,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const documentFiles: Array<{
       fileName: string;
       docxUrl: string;
+      driveWebViewLink: string;
       pdfUrl: string;
       docxDownloadUrl: string;
       pdfDownloadUrl: string;
@@ -307,12 +309,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       documentFiles.push({
         fileName: document.fileName,
-        docxUrl: docxFile.url,
+        docxUrl: docxFile.webViewLink,
+        driveWebViewLink: docxFile.webViewLink,
         pdfUrl: pdfFile.url,
-        docxDownloadUrl: `https://drive.google.com/uc?export=download&id=${docxFile.id}`,
-        pdfDownloadUrl: `https://drive.google.com/uc?export=download&id=${pdfFile.id}`,
+        docxDownloadUrl: docxFile.downloadUrl,
+        pdfDownloadUrl: pdfFile.downloadUrl,
         pdfBuffer,
       });
+    }
+
+    const wordArchive = new PizZip();
+    for (const document of generated) {
+      wordArchive.file(document.fileName, document.buffer);
+    }
+    const wordArchiveBuffer = wordArchive.generate({
+      type: "nodebuffer",
+      compression: "DEFLATE",
+    });
+    const wordArchiveFile = await uploadBinaryFile({
+      buffer: wordArchiveBuffer,
+      fileName: `${persistedSchool.nama_sekolah}_${year}_Word_documents.zip`,
+      mimeType: "application/zip",
+      folderId: folder.periodFolderId,
+    });
+    if (wordArchiveFile.warning && !folder.warning) {
+      warnings.add(wordArchiveFile.warning);
     }
 
     const bundleBuffer = await combinePdfs(
@@ -348,16 +369,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({
       success: true,
       bundlePdfUrl: bundleFile.url,
-      bundlePdfDownloadUrl: `https://drive.google.com/uc?export=download&id=${bundleFile.id}`,
+      bundlePdfPreviewUrl: `https://drive.google.com/file/d/${bundleFile.id}/preview`,
+      bundlePdfDownloadUrl: bundleFile.downloadUrl,
+      bundleWordZipUrl: wordArchiveFile.webViewLink,
+      bundleWordZipDownloadUrl: wordArchiveFile.downloadUrl,
       folderUrl: folder.periodFolderId
         ? `https://drive.google.com/drive/folders/${folder.periodFolderId}`
         : "https://drive.google.com/drive/my-drive",
       warnings: Array.from(warnings),
-      pdfBase64: bundleBuffer.toString("base64"),
       files: documentFiles.map(
-        ({ fileName, docxUrl, pdfUrl, docxDownloadUrl, pdfDownloadUrl }) => ({
+        ({
           fileName,
           docxUrl,
+          driveWebViewLink,
+          pdfUrl,
+          docxDownloadUrl,
+          pdfDownloadUrl,
+        }) => ({
+          fileName,
+          docxUrl,
+          driveWebViewLink,
           pdfUrl,
           docxDownloadUrl,
           pdfDownloadUrl,

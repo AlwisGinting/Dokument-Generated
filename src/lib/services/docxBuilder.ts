@@ -370,11 +370,21 @@ export async function buildLpjDocuments(
       suffix: "latar_belakang",
       data: baseData,
     },
-    {
-      template: "template_spj_part.docx",
-      suffix: "spj",
-      data: { ...baseData, parts },
-    },
+    ...parts.map((part, index) => {
+      const label =
+        part.nama_penjual.trim() ||
+        part.kategori_toko ||
+        part.kategori_bku ||
+        "part";
+      return {
+        template: "template_spj_part.docx",
+        suffix: `spj_part_${String(index + 1).padStart(2, "0")}_${fileSafeName(label).toLowerCase()}`,
+        data: {
+          ...baseData,
+          parts: [{ ...part, is_first_part: true }],
+        },
+      };
+    }),
   ];
 
   return Promise.all(
