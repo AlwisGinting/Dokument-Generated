@@ -115,18 +115,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       periode: periodValue.trim(),
       existingSchoolFolderId: school.gdrive_folder_id,
     });
+    const warnings = new Set<string>();
+    if (folder.warning) {
+      warnings.add(folder.warning);
+    }
     const sourceFile = await uploadBinaryFile({
       buffer: conversionBuffer,
       fileName: originalName,
       mimeType: sourceMimeType,
       folderId: folder.periodFolderId,
     });
+    if (sourceFile.warning && !folder.warning) {
+      warnings.add(sourceFile.warning);
+    }
     const pdfBuffer = await convertToPdfViaDrive({
       buffer: conversionBuffer,
       fileName: originalName,
       sourceMimeType,
       nativeMimeType,
-      folderId: folder.periodFolderId,
     });
     const pdfName = originalName.replace(/\.(docx|xlsx)$/i, ".pdf");
     const pdfFile = await uploadBinaryFile({
@@ -135,18 +141,26 @@ export async function POST(request: Request): Promise<NextResponse> {
       mimeType: "application/pdf",
       folderId: folder.periodFolderId,
     });
-    await updateSchoolProfile(
-      school.id,
-      { gdrive_folder_id: folder.schoolFolderId },
-      authenticated.accessToken,
-    );
+    if (pdfFile.warning && !folder.warning) {
+      warnings.add(pdfFile.warning);
+    }
+    if (folder.schoolFolderId) {
+      await updateSchoolProfile(
+        school.id,
+        { gdrive_folder_id: folder.schoolFolderId },
+        authenticated.accessToken,
+      );
+    }
 
     return NextResponse.json({
       success: true,
       sourceUrl: sourceFile.url,
       pdfUrl: pdfFile.url,
       pdfDownloadUrl: `https://drive.google.com/uc?export=download&id=${pdfFile.id}`,
-      folderUrl: `https://drive.google.com/drive/folders/${folder.periodFolderId}`,
+      folderUrl: folder.periodFolderId
+        ? `https://drive.google.com/drive/folders/${folder.periodFolderId}`
+        : "https://drive.google.com/drive/my-drive",
+      warnings: Array.from(warnings),
       pdfBase64: pdfBuffer.toString("base64"),
     });
   } catch (error) {

@@ -11,6 +11,7 @@ import { terbilangRupiah } from "@/lib/engines/terbilang";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { buildLpjDocuments } from "@/lib/services/docxBuilder";
 import { prepareExcelForPdf } from "@/lib/services/precisionConverter";
+import { extractGoogleDriveFolderId } from "@/lib/utils/googleDriveFolderId";
 import type {
   BkuMetadata,
   SchoolProfile,
@@ -284,6 +285,27 @@ function testManualPartValidation(): void {
       },
     ]),
     [],
+  );
+}
+
+function testGoogleDriveFolderIdParsing(): void {
+  const folderId = "1UNBXQj8xkc0qnnsBseX0tiiJ2S1BJsBe";
+  assert.equal(
+    extractGoogleDriveFolderId(
+      `https://drive.google.com/drive/folders/${folderId}?usp=drive_link`,
+    ),
+    folderId,
+  );
+  assert.equal(
+    extractGoogleDriveFolderId(`https://drive.google.com/open?id=${folderId}`),
+    folderId,
+  );
+  assert.equal(extractGoogleDriveFolderId(folderId), folderId);
+  assert.equal(extractGoogleDriveFolderId(""), null);
+  assert.equal(extractGoogleDriveFolderId("not-a-folder-url"), null);
+  assert.equal(
+    extractGoogleDriveFolderId(`https://example.com/drive/folders/${folderId}`),
+    null,
   );
 }
 
@@ -564,6 +586,7 @@ async function main(): Promise<void> {
   await testBkuPdfParsing();
   await testArkasMultilinePdfParsing();
   testManualPartValidation();
+  testGoogleDriveFolderIdParsing();
   await testDocxBuilder();
   console.log("Engine tests passed: parsing, classification, splitting, Rupiah wording, DOCX generation, and Excel fit-to-page.");
 }

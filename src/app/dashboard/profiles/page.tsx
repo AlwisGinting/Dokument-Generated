@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import SchoolLogoField from "@/components/SchoolLogoField";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
+import { extractGoogleDriveFolderId } from "@/lib/utils/googleDriveFolderId";
 import type { SchoolProfile, Vendor, VendorCategory } from "@/lib/types/lpj";
 
 const vendorCategories: VendorCategory[] = ["ATK", "OBAT", "KONSUMSI", "CETAK", "UMUM"];
@@ -97,7 +98,10 @@ const schoolFields: Array<{
   { key: "jumlah_siswa_l", label: "Jumlah siswa laki-laki", type: "number" },
   { key: "jumlah_siswa_p", label: "Jumlah siswa perempuan", type: "number" },
   { key: "lama_berdiri", label: "Lama berdiri (tahun)", type: "number" },
-  { key: "gdrive_folder_id", label: "Folder ID Google Drive" },
+  {
+    key: "gdrive_folder_id",
+    label: "Link Folder atau Folder ID Google Drive (Opsional)",
+  },
 ];
 
 function schoolToDraft(profile: SchoolProfile): SchoolDraft {
@@ -152,11 +156,13 @@ function integerValue(value: string, label: string): number | null {
 function TextField({
   label,
   type = "text",
+  placeholder,
   value,
   onChange,
 }: {
   label: string;
   type?: string;
+  placeholder?: string;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -167,6 +173,7 @@ function TextField({
         className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
         min={type === "number" ? "0" : undefined}
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         type={type}
         value={value}
       />
@@ -245,7 +252,7 @@ export default function ProfilesPage() {
         jumlah_siswa_l: jumlahSiswaL,
         jumlah_siswa_p: jumlahSiswaP,
         lama_berdiri: integerValue(schoolDraft.lama_berdiri, "Lama berdiri"),
-        gdrive_folder_id: nullable(schoolDraft.gdrive_folder_id),
+        gdrive_folder_id: extractGoogleDriveFolderId(schoolDraft.gdrive_folder_id),
         logo_data_url: schoolDraft.logo_data_url,
       };
       const { error: saveError } = await getSupabaseBrowserClient()
@@ -469,6 +476,11 @@ export default function ProfilesPage() {
                 <TextField
                   key={key}
                   label={label}
+                  placeholder={
+                    key === "gdrive_folder_id"
+                      ? "Link Folder atau Folder ID Google Drive (Opsional)"
+                      : undefined
+                  }
                   onChange={(value) =>
                     setSchoolDraft((current) => ({ ...current, [key]: value }))
                   }

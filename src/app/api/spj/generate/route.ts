@@ -239,6 +239,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       periode: period,
       existingSchoolFolderId: persistedSchool.gdrive_folder_id,
     });
+    const warnings = new Set<string>();
+    if (folder.warning) {
+      warnings.add(folder.warning);
+    }
     const generated = await buildLpjDocuments({
       schoolProfile: persistedSchool,
       metadata,
@@ -272,12 +276,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         mimeType: DOCX_MIME_TYPE,
         folderId: folder.periodFolderId,
       });
+      if (docxFile.warning && !folder.warning) {
+        warnings.add(docxFile.warning);
+      }
       const pdfBuffer = await convertToPdfViaDrive({
         buffer: document.buffer,
         fileName: document.fileName,
         sourceMimeType: DOCX_MIME_TYPE,
         nativeMimeType: NATIVE_DOC_MIME_TYPE,
-        folderId: folder.periodFolderId,
       });
       const pdfName = document.fileName.replace(/\.docx$/i, ".pdf");
       const pdfFile = await uploadBinaryFile({
@@ -286,6 +292,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         mimeType: "application/pdf",
         folderId: folder.periodFolderId,
       });
+      if (pdfFile.warning && !folder.warning) {
+        warnings.add(pdfFile.warning);
+      }
       documentFiles.push({
         fileName: document.fileName,
         docxUrl: docxFile.url,
@@ -306,10 +315,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       mimeType: "application/pdf",
       folderId: folder.periodFolderId,
     });
+    if (bundleFile.warning && !folder.warning) {
+      warnings.add(bundleFile.warning);
+    }
 
-    await updateSchoolProfile(persistedSchool.id, {
-      gdrive_folder_id: folder.schoolFolderId,
-    }, authenticated.accessToken);
+    if (folder.schoolFolderId) {
+      await updateSchoolProfile(persistedSchool.id, {
+        gdrive_folder_id: folder.schoolFolderId,
+      }, authenticated.accessToken);
+    }
     const totalPengeluaran =
       metadata.total_pengeluaran ??
       parts.reduce((total, part) => total + part.total_part, 0);
@@ -325,7 +339,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       success: true,
       bundlePdfUrl: bundleFile.url,
       bundlePdfDownloadUrl: `https://drive.google.com/uc?export=download&id=${bundleFile.id}`,
-      folderUrl: `https://drive.google.com/drive/folders/${folder.periodFolderId}`,
+      folderUrl: folder.periodFolderId
+        ? `https://drive.google.com/drive/folders/${folder.periodFolderId}`
+        : "https://drive.google.com/drive/my-drive",
+      warnings: Array.from(warnings),
       pdfBase64: bundleBuffer.toString("base64"),
       files: documentFiles.map(
         ({ fileName, docxUrl, pdfUrl, docxDownloadUrl, pdfDownloadUrl }) => ({

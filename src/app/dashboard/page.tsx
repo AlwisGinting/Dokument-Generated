@@ -33,6 +33,7 @@ import SmartPartEditor from "@/components/SmartPartEditor";
 import SchoolLogoField from "@/components/SchoolLogoField";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
+import { extractGoogleDriveFolderId } from "@/lib/utils/googleDriveFolderId";
 import type {
   BkuCategory,
   BkuMetadata,
@@ -68,6 +69,7 @@ interface GenerationResponse {
   folderUrl: string;
   pdfBase64: string;
   files: GeneratedFile[];
+  warnings?: string[];
   error?: string;
 }
 
@@ -91,6 +93,7 @@ interface QuickSchoolDraft {
   provinsi: string;
   nama_kepsek: string;
   no_hp: string;
+  gdrive_folder_id: string;
   logo_data_url: string | null;
 }
 
@@ -104,6 +107,7 @@ const blankQuickSchool = (): QuickSchoolDraft => ({
   provinsi: "",
   nama_kepsek: "",
   no_hp: "",
+  gdrive_folder_id: "",
   logo_data_url: null,
 });
 
@@ -740,7 +744,9 @@ export default function DashboardPage() {
           jumlah_siswa_l: 0,
           jumlah_siswa_p: 0,
           lama_berdiri: null,
-          gdrive_folder_id: null,
+          gdrive_folder_id: extractGoogleDriveFolderId(
+            quickSchool.gdrive_folder_id,
+          ),
           logo_data_url: quickSchool.logo_data_url,
         })
         .select("*")
@@ -807,7 +813,13 @@ export default function DashboardPage() {
       });
       const result = await responseJson<GenerationResponse>(response);
       setGenerationResult(result);
-      setGeneratorNotice("Empat dokumen berhasil dibuat, dikonversi, dan disinkronkan ke Drive.");
+      const notice =
+        "Empat dokumen berhasil dibuat, dikonversi, dan disinkronkan ke Drive.";
+      setGeneratorNotice(
+        result.warnings?.length
+          ? `${notice} Peringatan: ${result.warnings.join(" ")}`
+          : notice,
+      );
     } catch (generateError) {
       setGeneratorError(
         generateError instanceof Error
@@ -1052,12 +1064,21 @@ export default function DashboardPage() {
                       ["provinsi", "Provinsi"],
                       ["nama_kepsek", "Kepala sekolah"],
                       ["no_hp", "No. HP"],
+                      [
+                        "gdrive_folder_id",
+                        "Link Folder atau Folder ID Google Drive (Opsional)",
+                      ],
                     ] as const
                   ).map(([key, label]) => (
                     <label className="block" key={key}>
                       <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
                       <input
                         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-emerald-600"
+                        placeholder={
+                          key === "gdrive_folder_id"
+                            ? "Link Folder atau Folder ID Google Drive (Opsional)"
+                            : label
+                        }
                         onChange={(event) =>
                           setQuickSchool((current) => ({
                             ...current,
