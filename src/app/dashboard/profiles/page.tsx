@@ -13,6 +13,7 @@ import {
   Users,
   X,
 } from "lucide-react";
+import SchoolLogoField from "@/components/SchoolLogoField";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 import type { SchoolProfile, Vendor, VendorCategory } from "@/lib/types/lpj";
 
@@ -23,6 +24,7 @@ interface SchoolDraft {
   nama_sekolah: string;
   npsn: string;
   alamat_dusun_desa: string;
+  alamat_jalan: string;
   kecamatan: string;
   kabupaten: string;
   provinsi: string;
@@ -35,6 +37,7 @@ interface SchoolDraft {
   jumlah_siswa_p: string;
   lama_berdiri: string;
   gdrive_folder_id: string;
+  logo_data_url: string | null;
 }
 
 interface VendorDraft {
@@ -50,6 +53,7 @@ const blankSchoolDraft = (): SchoolDraft => ({
   nama_sekolah: "",
   npsn: "",
   alamat_dusun_desa: "",
+  alamat_jalan: "",
   kecamatan: "",
   kabupaten: "",
   provinsi: "",
@@ -62,6 +66,7 @@ const blankSchoolDraft = (): SchoolDraft => ({
   jumlah_siswa_p: "0",
   lama_berdiri: "",
   gdrive_folder_id: "",
+  logo_data_url: null,
 });
 
 const blankVendorDraft = (): VendorDraft => ({
@@ -73,13 +78,14 @@ const blankVendorDraft = (): VendorDraft => ({
 });
 
 const schoolFields: Array<{
-  key: Exclude<keyof SchoolDraft, "id">;
+  key: Exclude<keyof SchoolDraft, "id" | "logo_data_url">;
   label: string;
   type?: "email" | "tel" | "number";
 }> = [
   { key: "nama_sekolah", label: "Nama sekolah" },
   { key: "npsn", label: "NPSN" },
   { key: "alamat_dusun_desa", label: "Alamat dusun / desa" },
+  { key: "alamat_jalan", label: "Alamat jalan" },
   { key: "kecamatan", label: "Kecamatan" },
   { key: "kabupaten", label: "Kabupaten" },
   { key: "provinsi", label: "Provinsi" },
@@ -100,6 +106,7 @@ function schoolToDraft(profile: SchoolProfile): SchoolDraft {
     nama_sekolah: profile.nama_sekolah,
     npsn: profile.npsn ?? "",
     alamat_dusun_desa: profile.alamat_dusun_desa ?? "",
+    alamat_jalan: profile.alamat_jalan ?? "",
     kecamatan: profile.kecamatan ?? "",
     kabupaten: profile.kabupaten ?? "",
     provinsi: profile.provinsi ?? "",
@@ -112,6 +119,7 @@ function schoolToDraft(profile: SchoolProfile): SchoolDraft {
     jumlah_siswa_p: String(profile.jumlah_siswa_p),
     lama_berdiri: profile.lama_berdiri === null ? "" : String(profile.lama_berdiri),
     gdrive_folder_id: profile.gdrive_folder_id ?? "",
+    logo_data_url: profile.logo_data_url,
   };
 }
 
@@ -225,6 +233,7 @@ export default function ProfilesPage() {
         nama_sekolah: schoolDraft.nama_sekolah.trim(),
         npsn: nullable(schoolDraft.npsn),
         alamat_dusun_desa: nullable(schoolDraft.alamat_dusun_desa),
+        alamat_jalan: nullable(schoolDraft.alamat_jalan),
         kecamatan: nullable(schoolDraft.kecamatan),
         kabupaten: nullable(schoolDraft.kabupaten),
         provinsi: nullable(schoolDraft.provinsi),
@@ -237,6 +246,7 @@ export default function ProfilesPage() {
         jumlah_siswa_p: jumlahSiswaP,
         lama_berdiri: integerValue(schoolDraft.lama_berdiri, "Lama berdiri"),
         gdrive_folder_id: nullable(schoolDraft.gdrive_folder_id),
+        logo_data_url: schoolDraft.logo_data_url,
       };
       const { error: saveError } = await getSupabaseBrowserClient()
         .from("school_profiles")
@@ -303,6 +313,7 @@ export default function ProfilesPage() {
           nama_sekolah,
           npsn: null,
           alamat_dusun_desa: null,
+          alamat_jalan: null,
           kecamatan: null,
           kabupaten: null,
           provinsi: null,
@@ -315,6 +326,7 @@ export default function ProfilesPage() {
           jumlah_siswa_p: 0,
           lama_berdiri: null,
           gdrive_folder_id: null,
+          logo_data_url: null,
         }));
       if (missing.length === 0) {
         setNotice("Kedua profil contoh sudah tersedia.");
@@ -465,6 +477,13 @@ export default function ProfilesPage() {
                 />
               ))}
             </div>
+            <SchoolLogoField
+              logoDataUrl={schoolDraft.logo_data_url}
+              onChange={(logo_data_url) =>
+                setSchoolDraft((current) => ({ ...current, logo_data_url }))
+              }
+              disabled={savingSchool}
+            />
             <button
               className="inline-flex items-center gap-2 rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:opacity-60"
               disabled={savingSchool}

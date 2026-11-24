@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import PizZip from "pizzip";
 import * as XLSX from "xlsx";
@@ -137,6 +138,7 @@ async function testDocxBuilder(): Promise<void> {
     nama_sekolah: "PAUD Melati",
     npsn: "12345678",
     alamat_dusun_desa: "Desa Melati",
+    alamat_jalan: "Jalan Melati",
     kecamatan: "Sukamaju",
     kabupaten: "Contoh",
     provinsi: "Jawa Barat",
@@ -149,6 +151,7 @@ async function testDocxBuilder(): Promise<void> {
     jumlah_siswa_p: 11,
     lama_berdiri: 5,
     gdrive_folder_id: null,
+    logo_data_url: null,
   };
   const metadata: BkuMetadata = {
     bulan: "Januari",
@@ -208,19 +211,57 @@ async function testDocxBuilder(): Promise<void> {
     tanggalTerima: "1 Januari 2026",
     tanggalSurat: "31 Januari 2026",
   });
+  const defaultLogo = await readFile("public/assets/logo_paud.png");
   assert.equal(documents.length, 4);
   for (const document of documents) {
     const zip = new PizZip(document.buffer);
     const xml = zip.file("word/document.xml")?.asText();
+    const logo = zip.file("word/media/image1.png")?.asNodeBuffer();
     assert.ok(xml, `${document.fileName} has a Word document body`);
+    assert.ok(logo?.equals(defaultLogo), `${document.fileName} contains the fallback logo`);
     assert.ok(!/\{[#/^]?[a-z_]+\}/i.test(xml), `${document.fileName} has no unresolved tags`);
     if (document.template === "template_spj_part.docx") {
-      assert.equal((xml.match(/w:type="page"/g) ?? []).length, 2);
+      assert.equal((xml.match(/w:type="page"/g) ?? []).length, 3);
+      assert.equal((xml.match(/PESANAN BARANG/g) ?? []).length, 1);
+      assert.equal((xml.match(/SURAT PENGANTAR BARANG/g) ?? []).length, 1);
+      assert.equal((xml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 2);
+      assert.ok(xml.indexOf("PESANAN BARANG") < xml.indexOf("SURAT PENGANTAR BARANG"));
+      assert.ok(xml.indexOf("SURAT PENGANTAR BARANG") < xml.indexOf("KWITANSI PEMBELIAN"));
     }
     if (document.template === "template_laporan_bop.docx") {
       assert.ok(xml.includes("748.000"));
     }
   }
+
+  const customLogo = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/r1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const customDocuments = await buildLpjDocuments({
+    schoolProfile,
+    metadata,
+    parts,
+    logoDataUrl: `data:image/png;base64,${customLogo.toString("base64")}`,
+  });
+  const customZip = new PizZip(customDocuments[0].buffer);
+  assert.ok(
+    customZip.file("word/media/image1.png")?.asNodeBuffer().equals(customLogo),
+    "custom PNG logo replaces the template logo",
+  );
+
+  const utilityDocument = (await buildLpjDocuments({
+    schoolProfile,
+    metadata,
+    parts: [parts[1]],
+  })).find((document) => document.template === "template_spj_part.docx");
+  assert.ok(utilityDocument);
+  const utilityXml = new PizZip(utilityDocument.buffer)
+    .file("word/document.xml")
+    ?.asText();
+  assert.ok(utilityXml);
+  assert.equal((utilityXml.match(/w:type="page"/g) ?? []).length, 0);
+  assert.ok(utilityXml.includes("KWITANSI PEMBELIAN / PEMBAYARAN"));
+  assert.ok(!utilityXml.includes("PESANAN BARANG"));
 }
 
 async function main(): Promise<void> {

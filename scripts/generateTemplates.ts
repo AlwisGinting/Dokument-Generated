@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   AlignmentType,
   BorderStyle,
   Document,
+  ImageRun,
   PageBreak,
   Packer,
   Paragraph,
@@ -17,13 +18,42 @@ import {
 } from "docx";
 
 const outputDirectory = path.resolve(process.cwd(), "public", "templates");
+const logoPath = path.resolve(process.cwd(), "public", "assets", "logo_paud.png");
 const defaultFont = "Times New Roman";
 const textSize = 24;
+const pageWidth = 11906;
+const pageHeight = 16838;
+const pageMargin = 1134;
+const contentWidth = pageWidth - pageMargin * 2;
 const pageProperties: ISectionOptions["properties"] = {
   page: {
-    size: { width: 12240, height: 15840 },
-    margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+    size: { width: pageWidth, height: pageHeight },
+    margin: {
+      top: pageMargin,
+      right: pageMargin,
+      bottom: pageMargin,
+      left: pageMargin,
+    },
   },
+};
+
+const invisibleBorder = {
+  style: BorderStyle.NONE,
+  size: 0,
+  color: "FFFFFF",
+};
+const borderlessBorders = {
+  top: invisibleBorder,
+  bottom: invisibleBorder,
+  left: invisibleBorder,
+  right: invisibleBorder,
+  insideHorizontal: invisibleBorder,
+  insideVertical: invisibleBorder,
+};
+const blackBorder = {
+  style: BorderStyle.SINGLE,
+  size: 1,
+  color: "000000",
 };
 
 function paragraph(
@@ -31,6 +61,8 @@ function paragraph(
   options: {
     alignment?: (typeof AlignmentType)[keyof typeof AlignmentType];
     bold?: boolean;
+    underline?: boolean;
+    color?: string;
     size?: number;
     italics?: boolean;
     before?: number;
@@ -38,82 +70,135 @@ function paragraph(
   } = {},
 ): Paragraph {
   return new Paragraph({
-    alignment: options.alignment,
-    spacing: { before: options.before ?? 0, after: options.after ?? 160 },
+    alignment: options.alignment ?? AlignmentType.LEFT,
+    spacing: { before: options.before ?? 0, after: options.after ?? 120 },
     children: [
       new TextRun({
         text,
         font: defaultFont,
         size: options.size ?? textSize,
         bold: options.bold,
+        underline: options.underline ? {} : undefined,
+        color: options.color,
         italics: options.italics,
       }),
     ],
   });
 }
 
-function blankLine(): Paragraph {
-  return new Paragraph({ spacing: { after: 120 } });
+function imageParagraph(
+  logo: Buffer,
+  width: number,
+  height: number,
+  alignment: (typeof AlignmentType)[keyof typeof AlignmentType],
+  spacing: { before?: number; after?: number } = {},
+): Paragraph {
+  return new Paragraph({
+    alignment,
+    spacing: { before: spacing.before ?? 0, after: spacing.after ?? 0 },
+    children: [
+      new ImageRun({
+        type: "png",
+        data: logo,
+        transformation: { width, height },
+        altText: {
+          name: "Logo PAUD",
+          title: "Logo PAUD",
+          description: "Logo lembaga pendidikan anak usia dini",
+        },
+      }),
+    ],
+  });
+}
+
+function blankLine(after = 160): Paragraph {
+  return new Paragraph({ spacing: { after } });
 }
 
 function makeCell(
-  children: Paragraph[],
+  children: Array<Paragraph | Table>,
   width: number,
+  options: { columnSpan?: number; verticalAlign?: "top" | "center" | "bottom" } = {},
 ): TableCell {
   return new TableCell({
     children,
     width: { size: width, type: WidthType.DXA },
-    verticalAlign: VerticalAlign.CENTER,
-    margins: { top: 80, bottom: 80, left: 100, right: 100 },
+    columnSpan: options.columnSpan,
+    verticalAlign: options.verticalAlign ?? VerticalAlign.CENTER,
+    margins: { top: 50, bottom: 50, left: 60, right: 60 },
+    borders: borderlessBorders,
   });
 }
 
-function letterhead(): (Paragraph | Table)[] {
-  const border = {
-    style: BorderStyle.SINGLE,
-    size: 2,
-    color: "000000",
-  };
-
-  return [
-    new Table({
-      width: { size: 9360, type: WidthType.DXA },
-      columnWidths: [1700, 7660],
-      borders: {
-        top: border,
-        bottom: border,
-        left: border,
-        right: border,
-        insideHorizontal: border,
-        insideVertical: border,
-      },
-      rows: [
-        new TableRow({
-          children: [
-            makeCell(
-              [paragraph("LOGO PAUD", { alignment: AlignmentType.CENTER, bold: true })],
-              1700,
-            ),
-            makeCell(
-              [
-                paragraph("{nama_sekolah}", {
+function letterhead(logo: Buffer): (Paragraph | Table)[] {
+  const leftWidth = 1247;
+  const rightWidth = contentWidth - leftWidth;
+  const header = new Table({
+    width: { size: contentWidth, type: WidthType.DXA },
+    columnWidths: [leftWidth, rightWidth],
+    borders: borderlessBorders,
+    rows: [
+      new TableRow({
+        children: [
+          makeCell(
+            [imageParagraph(logo, 82, 82, AlignmentType.CENTER)],
+            leftWidth,
+          ),
+          makeCell(
+            [
+              paragraph("LEMBAGA PENDIDIKAN ANAK USIA DINI", {
+                alignment: AlignmentType.CENTER,
+                bold: true,
+                size: 28,
+                after: 30,
+              }),
+              paragraph("({nama_sekolah})", {
+                alignment: AlignmentType.CENTER,
+                bold: true,
+                size: 28,
+                after: 30,
+              }),
+              paragraph("{alamat_dusun_desa}. KECAMATAN {kecamatan}", {
+                alignment: AlignmentType.CENTER,
+                bold: true,
+                size: 24,
+                after: 20,
+              }),
+              paragraph("KABUPATEN {kabupaten}", {
+                alignment: AlignmentType.CENTER,
+                bold: true,
+                size: 24,
+                after: 20,
+              }),
+              paragraph(
+                "{alamat_jalan}   Email: {email}   No. HP: {no_hp}",
+                {
                   alignment: AlignmentType.CENTER,
-                  bold: true,
-                  size: 30,
-                }),
-                paragraph(
-                  "{alamat_dusun_desa}, Kecamatan {kecamatan}, Kabupaten {kabupaten}, Provinsi {provinsi}",
-                  { alignment: AlignmentType.CENTER, size: 20, after: 40 },
-                ),
-              ],
-              7660,
-            ),
-          ],
-        }),
-      ],
-    }),
-    paragraph("", { after: 0 }),
-  ];
+                  size: 20,
+                  after: 0,
+                },
+              ),
+            ],
+            rightWidth,
+          ),
+        ],
+      }),
+    ],
+  });
+  const doubleRule = new Paragraph({
+    children: [new TextRun({ text: " ", font: defaultFont, size: 1 })],
+    border: {
+      bottom: {
+        style: BorderStyle.DOUBLE,
+        size: 24,
+        color: "000000",
+        space: 1,
+      },
+    },
+    spacing: { before: 80, after: 240 },
+  });
+
+  return [header, doubleRule];
 }
 
 function createDocument(children: (Paragraph | Table)[]): Document {
@@ -127,31 +212,287 @@ function createDocument(children: (Paragraph | Table)[]): Document {
   });
 }
 
+function signatureBlock(options: {
+  includePosition?: boolean;
+  includeSchool?: boolean;
+} = {}): Paragraph[] {
+  return [
+    paragraph("{tempat_surat}, {tanggal_surat}", {
+      alignment: AlignmentType.RIGHT,
+      before: 180,
+      after: 120,
+    }),
+    ...(options.includeSchool
+      ? [
+          paragraph("{nama_sekolah}", {
+            alignment: AlignmentType.RIGHT,
+            after: 0,
+          }),
+        ]
+      : []),
+    ...(options.includePosition
+      ? [
+          paragraph("{jabatan_kepsek}", {
+            alignment: AlignmentType.RIGHT,
+            after: 1050,
+          }),
+        ]
+      : [blankLine(1050)]),
+    paragraph("{nama_kepsek}", {
+      alignment: AlignmentType.RIGHT,
+      bold: true,
+      underline: true,
+      after: 0,
+    }),
+  ];
+}
+
+function createCover(logo: Buffer): Document {
+  return createDocument([
+    blankLine(520),
+    paragraph("{judul_dokumen}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 32,
+      after: 180,
+    }),
+    paragraph("TAHUN {tahun_anggaran}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 32,
+      after: 0,
+    }),
+    imageParagraph(logo, 170, 170, AlignmentType.CENTER, {
+      before: 1900,
+      after: 1900,
+    }),
+    paragraph("{nama_sekolah}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      before: 1150,
+      after: 160,
+    }),
+    paragraph("{alamat_dusun_desa}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 160,
+    }),
+    paragraph("KECAMATAN {kecamatan}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 160,
+    }),
+    paragraph("KABUPATEN {kabupaten}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 160,
+    }),
+    paragraph("PROVINSI {provinsi}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 0,
+    }),
+  ]);
+}
+
+function borderlessTable(
+  rows: TableRow[],
+  widths: number[],
+): Table {
+  return new Table({
+    width: { size: contentWidth, type: WidthType.DXA },
+    columnWidths: widths,
+    borders: borderlessBorders,
+    rows,
+  });
+}
+
+function createBopReport(logo: Buffer): Document {
+  const halfWidth = Math.floor(contentWidth / 2);
+  const remainder = contentWidth - halfWidth;
+  const addressTable = borderlessTable(
+    [
+      new TableRow({
+        children: [
+          makeCell(
+            [
+              paragraph("Nomor : {nomor_surat}", { after: 120 }),
+              paragraph("Lampiran : {lampiran}", { after: 120 }),
+              paragraph("Perihal : Pelaporan Penggunaan Dana BOP", {
+                after: 0,
+              }),
+            ],
+            halfWidth,
+            { verticalAlign: VerticalAlign.TOP },
+          ),
+          makeCell(
+            [
+              paragraph("Kepada Yth :", { after: 80 }),
+              paragraph("Kepala Dinas Pendidikan Pemuda dan Olahraga", {
+                after: 80,
+              }),
+              paragraph("Di -", { after: 80 }),
+              paragraph("{kota_dinas}", { after: 0 }),
+            ],
+            remainder,
+            { verticalAlign: VerticalAlign.TOP },
+          ),
+        ],
+      }),
+    ],
+    [halfWidth, remainder],
+  );
+  const detailWidths = [4700, 180, contentWidth - 4880];
+  const details = [
+    [
+      "Jumlah dana yang diterima di Bank SUMUT pada tanggal {tanggal_terima}",
+      "Rp. {jumlah_terima},-",
+    ],
+    [
+      "Sisa dana / Kas di {nama_sekolah} pada tanggal {tanggal_sisa_kas}",
+      "Rp. {sisa_kas},-",
+    ],
+    [
+      "Rekapitulasi penggunaan dana {periode_rekap}",
+      "Rp. {total_pengeluaran},-",
+    ],
+  ];
+  const detailTable = borderlessTable(
+    details.map(
+      ([label, amount]) =>
+        new TableRow({
+          children: [
+            makeCell([paragraph(label, { after: 100 })], detailWidths[0]),
+            makeCell([paragraph(":", { alignment: AlignmentType.CENTER, after: 100 })], detailWidths[1]),
+            makeCell([paragraph(amount, { after: 100 })], detailWidths[2]),
+          ],
+        }),
+    ),
+    detailWidths,
+  );
+
+  return createDocument([
+    ...letterhead(logo),
+    paragraph("BAB I", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 30,
+    }),
+    paragraph("PENDAHULUAN", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 28,
+      after: 300,
+    }),
+    addressTable,
+    blankLine(100),
+    paragraph("Dengan hormat,", { before: 120, after: 120 }),
+    paragraph(
+      "Bersama ini kami laporkan penggunaan dana BOP di Lembaga Pendidikan Anak Usia Dini {nama_sekolah} Tahun Pelajaran {tahun_pelajaran} sebagai berikut:",
+      { after: 180 },
+    ),
+    detailTable,
+    blankLine(100),
+    paragraph("Bukti pembelian barang / kuitansi / tanda terima terlampir.", {
+      after: 140,
+    }),
+    paragraph(
+      "Demikianlah laporan penggunaan dana ini disampaikan oleh Lembaga {nama_sekolah} agar dapat dimaklumi.",
+      { after: 260 },
+    ),
+    ...signatureBlock({ includePosition: true }),
+  ]);
+}
+
+function createBackground(logo: Buffer): Document {
+  return createDocument([
+    ...letterhead(logo),
+    paragraph("A. Latar Belakang", { bold: true, before: 80, after: 100 }),
+    paragraph("{latar_belakang_paragraf_1}", { after: 100 }),
+    paragraph("{latar_belakang_paragraf_2}", { after: 100 }),
+    paragraph("{latar_belakang_paragraf_3}", { after: 180 }),
+    paragraph("B. Tujuan", { bold: true, before: 80, after: 100 }),
+    paragraph("1. Membentuk dan menanamkan budi pekerti serta nilai-nilai keagamaan sejak dini.", { after: 70 }),
+    paragraph("2. Mengembangkan kemampuan komunikasi dan bahasa anak dalam kehidupan sehari-hari.", { after: 70 }),
+    paragraph("3. Mengembangkan daya pikir, kreativitas, dan kemampuan memecahkan masalah sederhana.", { after: 70 }),
+    paragraph("4. Membiasakan perilaku disiplin, mandiri, dan bertanggung jawab sesuai usia anak.", { after: 70 }),
+    paragraph("5. Mengembangkan kemampuan motorik dasar melalui kegiatan yang aman dan menyenangkan.", { after: 180 }),
+    paragraph("C. Peserta Didik / Sasaran", { bold: true, before: 80, after: 100 }),
+    paragraph(
+      "Sasaran kegiatan adalah peserta didik {nama_sekolah} yang berdomisili di {desa_sasaran}. Jumlah peserta didik sebanyak {total_siswa} anak, terdiri atas {jumlah_siswa_l} laki-laki dan {jumlah_siswa_p} perempuan.",
+      { after: 180 },
+    ),
+    paragraph("D. Hasil yang Dicapai", { bold: true, before: 80, after: 100 }),
+    paragraph(
+      "Dukungan dana BOP bagi {nama_sekolah} membantu pemenuhan kebutuhan pembelajaran dan operasional, meningkatkan kualitas layanan, serta mendukung tumbuh kembang peserta didik. Kegiatan dan penggunaan dana dicatat sebagai bahan evaluasi dan pertanggungjawaban.",
+      { after: 180 },
+    ),
+    paragraph("E. Tindak Lanjut", { bold: true, before: 80, after: 100 }),
+    paragraph(
+      "{nama_sekolah} telah menyelenggarakan layanan selama {lama_berdiri} tahun. Lembaga akan menjaga keberlanjutan layanan, menindaklanjuti hasil evaluasi, dan mengusulkan bantuan untuk tahun anggaran {tahun_berikutnya}.",
+      { after: 180 },
+    ),
+    paragraph("F. Saran", { bold: true, before: 80, after: 100 }),
+    paragraph("1. Penyaluran bantuan sebaiknya dilakukan pada awal tahun ajaran agar kegiatan dapat direncanakan dan dilaksanakan tepat waktu.", { after: 70 }),
+    paragraph("2. Pendanaan lanjutan diharapkan tersedia secara berkesinambungan sesuai kebutuhan dan ketentuan yang berlaku.", { after: 220 }),
+    ...signatureBlock({ includeSchool: true }),
+  ]);
+}
+
 function itemTable(includePrices: boolean): Table {
-  const headers = includePrices
-    ? ["No", "Nama barang", "Diantar", "Banyaknya", "Harga satuan (Rp)", "Jumlah harga (Rp)"]
-    : ["No", "Nama barang", "Diantar", "Banyaknya", "Harga satuan (Rp)", "Jumlah harga satuan (Rp)"];
-  const widths = includePrices
-    ? [600, 2700, 1100, 1300, 1750, 1910]
-    : [600, 2500, 1000, 1300, 1900, 2060];
-  const border = {
-    style: BorderStyle.SINGLE,
-    size: 1,
-    color: "000000",
-  };
-  const cell = (text: string, width: number, bold = false) =>
-    makeCell([paragraph(text, { alignment: AlignmentType.CENTER, bold, size: 18, after: 0 })], width);
+  const widths = [540, 2550, 1120, 1250, 1900, contentWidth - 7360];
+  const headers = [
+    "No",
+    "Nama Barang",
+    "Diantar",
+    "Banyaknya",
+    "Harga Satuan Rp",
+    "Jumlah Harga Satuan Rp",
+  ];
+  const cell = (
+    text: string,
+    width: number,
+    bold = false,
+    options: { columnSpan?: number } = {},
+  ) =>
+    new TableCell({
+      children: [
+        paragraph(text, {
+          alignment: AlignmentType.CENTER,
+          bold,
+          size: 17,
+          after: 0,
+        }),
+      ],
+      width: { size: width, type: WidthType.DXA },
+      columnSpan: options.columnSpan,
+      verticalAlign: VerticalAlign.CENTER,
+      margins: { top: 55, bottom: 55, left: 45, right: 45 },
+      borders: {
+        top: blackBorder,
+        bottom: blackBorder,
+        left: blackBorder,
+        right: blackBorder,
+      },
+    });
+  const firstFiveWidth = widths.slice(0, 5).reduce((total, width) => total + width, 0);
 
   return new Table({
-    width: { size: 9360, type: WidthType.DXA },
+    width: { size: contentWidth, type: WidthType.DXA },
     columnWidths: widths,
     borders: {
-      top: border,
-      bottom: border,
-      left: border,
-      right: border,
-      insideHorizontal: border,
-      insideVertical: border,
+      top: blackBorder,
+      bottom: blackBorder,
+      left: blackBorder,
+      right: blackBorder,
+      insideHorizontal: blackBorder,
+      insideVertical: blackBorder,
     },
     rows: [
       new TableRow({
@@ -164,231 +505,83 @@ function itemTable(includePrices: boolean): Table {
           cell("{nama_barang}", widths[1]),
           cell("{diantar}", widths[2]),
           cell("{banyaknya}", widths[3]),
-          cell(includePrices ? "{harga_satuan}" : "[KOSONG]", widths[4]),
-          cell(
-            includePrices ? "{jumlah_harga}{/items}" : "[KOSONG]{/items}",
-            widths[5],
-          ),
+          cell(includePrices ? "{harga_satuan}" : "", widths[4]),
+          cell(includePrices ? "{jumlah_harga}{/items}" : "{/items}", widths[5]),
+        ],
+      }),
+      new TableRow({
+        children: [
+          cell("TOTAL", firstFiveWidth, true, { columnSpan: 5 }),
+          cell(includePrices ? "{total_part}" : "", widths[5], true),
         ],
       }),
     ],
   });
 }
 
-function createCover(): Document {
-  return createDocument([
-    blankLine(),
-    paragraph("LOGO PAUD", { alignment: AlignmentType.CENTER, bold: true, size: 22 }),
-    blankLine(),
-    paragraph("{nama_sekolah}", {
+function barangPages(logo: Buffer, includePrices: boolean): (Paragraph | Table)[] {
+  const title = includePrices ? "SURAT PENGANTAR BARANG" : "PESANAN BARANG";
+
+  return [
+    ...letterhead(logo),
+    paragraph("Kepada Yth : {nama_penjual}", { bold: true, before: 160, after: 80 }),
+    paragraph("Di {alamat_penjual}", { after: 200 }),
+    paragraph(title, {
       alignment: AlignmentType.CENTER,
       bold: true,
-      size: 32,
-      after: 240,
-    }),
-    paragraph("{alamat_dusun_desa}", { alignment: AlignmentType.CENTER, size: 22 }),
-    paragraph("Kecamatan {kecamatan}", { alignment: AlignmentType.CENTER, size: 22 }),
-    paragraph("Kabupaten {kabupaten}, Provinsi {provinsi}", {
-      alignment: AlignmentType.CENTER,
-      size: 22,
-    }),
-    blankLine(),
-    blankLine(),
-    blankLine(),
-    paragraph("{judul_dokumen}", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 36,
-      before: 600,
-      after: 360,
-    }),
-    paragraph("TAHUN ANGGARAN {tahun_anggaran}", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
+      underline: true,
       size: 28,
+      after: 220,
     }),
-    blankLine(),
-    blankLine(),
-    blankLine(),
-    paragraph("{nama_sekolah}", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-    }),
-    paragraph("{alamat_dusun_desa}", { alignment: AlignmentType.CENTER, size: 22 }),
-    paragraph("Kecamatan {kecamatan}", { alignment: AlignmentType.CENTER, size: 22 }),
-    paragraph("Kabupaten {kabupaten}, Provinsi {provinsi}", {
-      alignment: AlignmentType.CENTER,
-      size: 22,
-    }),
-  ]);
+    paragraph(
+      "Dengan hormat, untuk keperluan {nama_sekolah} pada bulan {bulan_alokasi}, sumber dana BOP Tahun Anggaran {tahun_anggaran}, kami memesan / menyampaikan barang-barang berikut:",
+      { after: 180 },
+    ),
+    itemTable(includePrices),
+    paragraph("Ketentuan:", { bold: true, before: 180, after: 90 }),
+    paragraph("1. Barang harus sesuai dengan jenis, spesifikasi, dan jumlah pada tabel.", { after: 70 }),
+    paragraph("2. Barang diantar dalam keadaan baik dan diperiksa oleh pihak sekolah.", { after: 170 }),
+    ...signatureBlock({ includePosition: true, includeSchool: true }),
+  ];
 }
 
-function createBopReport(): Document {
-  return createDocument([
-    ...letterhead(),
-    paragraph("LAPORAN PERTANGGUNGJAWABAN BOP", {
+function receiptPage(): Paragraph[] {
+  return [
+    paragraph("KWITANSI PEMBELIAN / PEMBAYARAN", {
       alignment: AlignmentType.CENTER,
       bold: true,
+      underline: true,
       size: 28,
-      before: 240,
-    }),
-    paragraph("Nomor: {nomor_surat}", { alignment: AlignmentType.CENTER, after: 360 }),
-    paragraph("Kepada Yth. Kepala Dinas Pendidikan Pemuda dan Olahraga", { after: 0 }),
-    paragraph("di {kota_dinas}", { after: 240 }),
-    paragraph("BAB I", { alignment: AlignmentType.CENTER, bold: true, size: 26 }),
-    paragraph("PENDAHULUAN", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 26,
-      after: 240,
+      after: 0,
     }),
     paragraph(
-      "Laporan ini disusun sebagai bentuk pertanggungjawaban atas penggunaan Bantuan Operasional Penyelenggaraan (BOP) PAUD pada {nama_sekolah}.",
-      { after: 200 },
+      "Lampiran Bukti Fisik: {kode_part} - {uraian_singkat} ({bulan_alokasi})",
+      {
+        alignment: AlignmentType.RIGHT,
+        color: "777777",
+        size: 16,
+        before: 10_400,
+        after: 0,
+      },
     ),
-    paragraph("A. Penerimaan Dana", { bold: true, before: 120 }),
-    paragraph(
-      "Dana diterima melalui {nama_bank} pada tanggal {tanggal_terima} sebesar Rp {jumlah_terima}.",
-    ),
-    paragraph("B. Penggunaan Dana", { bold: true, before: 120 }),
-    paragraph(
-      "Rekapitulasi penggunaan dana pada periode {periode_rekap} sebesar Rp {total_pengeluaran}. Sisa kas pada akhir periode adalah Rp {sisa_kas}.",
-    ),
-    paragraph(
-      "Dana digunakan sesuai dengan kebutuhan penyelenggaraan layanan pendidikan anak usia dini dan ketentuan yang berlaku.",
-      { after: 300 },
-    ),
-    paragraph("Demikian laporan pertanggungjawaban ini dibuat dengan sebenarnya."),
-    blankLine(),
-    paragraph("{tempat_surat}, {tanggal_surat}", {
-      alignment: AlignmentType.RIGHT,
-      after: 120,
-    }),
-    paragraph("{jabatan_kepsek}", { alignment: AlignmentType.RIGHT, after: 1100 }),
-    paragraph("{nama_kepsek}", { alignment: AlignmentType.RIGHT, bold: true }),
-  ]);
+  ];
 }
 
-function createBackground(): Document {
-  return createDocument([
-    ...letterhead(),
-    paragraph("LATAR BELAKANG DAN RENCANA KEGIATAN", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-      before: 240,
-      after: 300,
-    }),
-    paragraph("A. Latar Belakang", { bold: true }),
-    paragraph(
-      "{latar_belakang_narasi}",
-      { after: 220 },
-    ),
-    paragraph("B. Tujuan", { bold: true, before: 120 }),
-    paragraph(
-      "Kegiatan ini bertujuan meningkatkan mutu layanan pendidikan, mendukung proses belajar yang aktif dan menyenangkan, memenuhi kebutuhan operasional satuan pendidikan, serta memastikan penggunaan dana dilakukan secara efektif, transparan, dan akuntabel.",
-      { after: 220 },
-    ),
-    paragraph("C. Peserta Didik/Sasaran", { bold: true, before: 120 }),
-    paragraph(
-      "Sasaran kegiatan adalah peserta didik {nama_sekolah} yang berdomisili di {desa_sasaran}. Jumlah peserta didik sebanyak {total_siswa} anak, terdiri atas {jumlah_siswa_l} peserta didik laki-laki dan {jumlah_siswa_p} peserta didik perempuan.",
-      { after: 220 },
-    ),
-    paragraph("D. Hasil yang Dicapai", { bold: true, before: 120 }),
-    paragraph(
-      "Kegiatan yang direncanakan mendukung tersedianya kebutuhan pembelajaran dan operasional, meningkatkan partisipasi peserta didik, serta membantu satuan pendidikan memberikan layanan yang lebih tertib dan berkualitas. Pelaksanaan dan hasil kegiatan dicatat sebagai bahan evaluasi dan pertanggungjawaban.",
-      { after: 220 },
-    ),
-    paragraph("E. Tindak Lanjut", { bold: true, before: 120 }),
-    paragraph(
-      "{nama_sekolah} telah berdiri selama {lama_berdiri} tahun. Pada tahun berikutnya, satuan pendidikan akan menindaklanjuti hasil evaluasi melalui perencanaan kegiatan yang lebih tepat sasaran, pemeliharaan sarana, dan peningkatan mutu layanan pada tahun {tahun_berikutnya}.",
-      { after: 220 },
-    ),
-    paragraph("F. Saran", { bold: true, before: 120 }),
-    paragraph(
-      "Dukungan dan kerja sama dari pemerintah, orang tua, serta masyarakat diharapkan terus terjalin. Pengelolaan kegiatan dan dana hendaknya dilaksanakan secara tertib, terbuka, sesuai kebutuhan peserta didik, dan mengikuti ketentuan yang berlaku.",
-      { after: 300 },
-    ),
-    paragraph("Mengetahui,", { alignment: AlignmentType.RIGHT }),
-    paragraph("{jabatan_kepsek}", { alignment: AlignmentType.RIGHT, after: 1100 }),
-    paragraph("{nama_kepsek}", { alignment: AlignmentType.RIGHT, bold: true }),
-  ]);
-}
-
-function createSpjPart(): Document {
+function createSpjPart(logo: Buffer): Document {
   return createDocument([
     paragraph("{#parts}", { after: 0 }),
+    paragraph("{^is_first_part}", { after: 0 }),
+    new Paragraph({ children: [new PageBreak()] }),
+    paragraph("{/is_first_part}", { after: 0 }),
     paragraph("{#is_barang}", { after: 0 }),
-    ...letterhead(),
-    paragraph("KEPADA YTH. {nama_penjual}", { bold: true, before: 200 }),
-    paragraph("Di {alamat_penjual}", { after: 220 }),
-    paragraph("PESANAN BARANG", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-      after: 240,
-    }),
-    paragraph(
-      "Dengan hormat, kami memesan barang-barang berikut untuk keperluan {nama_sekolah}:",
-    ),
-    itemTable(false),
-    paragraph("Ketentuan:", { bold: true, before: 200 }),
-    paragraph("1. Barang yang dipesan harus sesuai dengan jenis dan jumlah pada tabel."),
-    paragraph("2. Barang diantar dalam keadaan baik dan diterima oleh pihak sekolah."),
-    paragraph("3. Pembayaran dilakukan setelah barang diterima dan diperiksa."),
-    blankLine(),
-    paragraph("{tempat_surat}, {tanggal_surat}", { alignment: AlignmentType.RIGHT }),
-    paragraph("{jabatan_kepsek}", { alignment: AlignmentType.RIGHT, after: 1100 }),
-    paragraph("{nama_kepsek}", { alignment: AlignmentType.RIGHT, bold: true }),
+    ...barangPages(logo, false),
     new Paragraph({ children: [new PageBreak()] }),
-    ...letterhead(),
-    paragraph("SURAT PENGANTAR BARANG", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-      before: 220,
-      after: 260,
-    }),
-    paragraph("Barang-barang berikut diserahkan kepada {nama_sekolah}:"),
-    itemTable(true),
-    paragraph("Total: Rp {total_part}", {
-      alignment: AlignmentType.RIGHT,
-      bold: true,
-      before: 200,
-    }),
-    paragraph("Barang telah diterima dalam keadaan baik."),
-    blankLine(),
-    paragraph("Penerima,", { alignment: AlignmentType.RIGHT }),
-    paragraph("{jabatan_kepsek}", { alignment: AlignmentType.RIGHT, after: 1100 }),
-    paragraph("{nama_kepsek}", { alignment: AlignmentType.RIGHT, bold: true }),
+    ...barangPages(logo, true),
     new Paragraph({ children: [new PageBreak()] }),
-    paragraph("KWITANSI PEMBELIAN / PEMBAYARAN", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-      before: 220,
-    }),
-    paragraph("{kode_part} - {uraian_singkat}", {
-      alignment: AlignmentType.RIGHT,
-      size: 18,
-      before: 9300,
-      after: 0,
-    }),
+    ...receiptPage(),
     paragraph("{/is_barang}", { after: 0 }),
     paragraph("{^is_barang}", { after: 0 }),
-    paragraph("KWITANSI PEMBELIAN / PEMBAYARAN", {
-      alignment: AlignmentType.CENTER,
-      bold: true,
-      size: 28,
-      before: 220,
-    }),
-    paragraph("{kode_part} - {uraian_singkat}", {
-      alignment: AlignmentType.RIGHT,
-      size: 18,
-      before: 9300,
-      after: 0,
-    }),
+    ...receiptPage(),
     paragraph("{/is_barang}", { after: 0 }),
     paragraph("{/parts}", { after: 0 }),
   ]);
@@ -402,11 +595,12 @@ async function writeTemplate(filename: string, document: Document): Promise<void
 
 async function main(): Promise<void> {
   await mkdir(outputDirectory, { recursive: true });
+  const logo = await readFile(logoPath);
   await Promise.all([
-    writeTemplate("template_cover.docx", createCover()),
-    writeTemplate("template_laporan_bop.docx", createBopReport()),
-    writeTemplate("template_latar_belakang.docx", createBackground()),
-    writeTemplate("template_spj_part.docx", createSpjPart()),
+    writeTemplate("template_cover.docx", createCover(logo)),
+    writeTemplate("template_laporan_bop.docx", createBopReport(logo)),
+    writeTemplate("template_latar_belakang.docx", createBackground(logo)),
+    writeTemplate("template_spj_part.docx", createSpjPart(logo)),
   ]);
 }
 

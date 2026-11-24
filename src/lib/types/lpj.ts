@@ -8,6 +8,7 @@ export interface SchoolProfile {
   nama_sekolah: string;
   npsn: string | null;
   alamat_dusun_desa: string | null;
+  alamat_jalan: string | null;
   kecamatan: string | null;
   kabupaten: string | null;
   provinsi: string | null;
@@ -20,6 +21,7 @@ export interface SchoolProfile {
   jumlah_siswa_p: number;
   lama_berdiri: number | null;
   gdrive_folder_id: string | null;
+  logo_data_url: string | null;
 }
 
 export interface Vendor {

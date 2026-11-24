@@ -5,6 +5,7 @@ create table if not exists public.school_profiles (
   nama_sekolah text not null,
   npsn text,
   alamat_dusun_desa text,
+  alamat_jalan text,
   kecamatan text,
   kabupaten text,
   provinsi text,
@@ -17,6 +18,7 @@ create table if not exists public.school_profiles (
   jumlah_siswa_p integer not null default 0,
   lama_berdiri integer,
   gdrive_folder_id text,
+  logo_data_url text,
   owner_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   created_at timestamptz not null default now(),
   constraint school_profiles_jumlah_siswa_l_nonnegative check (jumlah_siswa_l >= 0),
@@ -46,6 +48,10 @@ create table if not exists public.generation_logs (
   constraint generation_logs_total_pengeluaran_nonnegative check (total_pengeluaran >= 0)
 );
 
+alter table public.school_profiles
+  add column if not exists alamat_jalan text;
+alter table public.school_profiles
+  add column if not exists logo_data_url text;
 alter table public.school_profiles
   add column if not exists owner_id uuid references auth.users (id) on delete cascade;
 alter table public.school_profiles

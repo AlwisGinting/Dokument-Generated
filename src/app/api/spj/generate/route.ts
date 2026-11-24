@@ -9,6 +9,7 @@ import {
   uploadBinaryFile,
 } from "@/lib/services/googleDriveService";
 import { authenticateRequest, type AuthenticatedRequest } from "@/lib/services/authServer";
+import { isPngDataUrl } from "@/lib/utils/logoDataUrl";
 import {
   createGenerationLog,
   getSchoolProfile,
@@ -50,6 +51,7 @@ function isSchoolProfile(value: unknown): value is SchoolProfile {
     typeof value.jumlah_siswa_p === "number" &&
     isNullableString(value.npsn) &&
     isNullableString(value.alamat_dusun_desa) &&
+    isNullableString(value.alamat_jalan) &&
     isNullableString(value.kecamatan) &&
     isNullableString(value.kabupaten) &&
     isNullableString(value.provinsi) &&
@@ -58,7 +60,8 @@ function isSchoolProfile(value: unknown): value is SchoolProfile {
     isNullableString(value.nama_kepsek) &&
     isNullableString(value.nama_bendahara) &&
     isNullableNumber(value.lama_berdiri) &&
-    isNullableString(value.gdrive_folder_id)
+    isNullableString(value.gdrive_folder_id) &&
+    isNullableString(value.logo_data_url)
   );
 }
 
@@ -167,6 +170,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   const schoolProfile = body.schoolProfile;
   const metadata = body.metadata;
   const parts = body.parts;
+  const logoDataUrl = body.logoDataUrl;
+  const hasLogoOverride = Object.prototype.hasOwnProperty.call(body, "logoDataUrl");
+  let logoOverride: string | null | undefined;
+  if (hasLogoOverride) {
+    if (logoDataUrl === null) {
+      logoOverride = null;
+    } else if (isPngDataUrl(logoDataUrl)) {
+      logoOverride = logoDataUrl;
+    } else {
+      return NextResponse.json(
+        { error: "Logo khusus harus berupa PNG Data URL yang valid dan berukuran sesuai batas." },
+        { status: 400 },
+      );
+    }
+  }
   if (
     !isSchoolProfile(schoolProfile) ||
     !isBkuMetadata(metadata) ||
@@ -232,8 +250,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       nomorSurat: optionalString("nomorSurat"),
       namaBank: optionalString("namaBank"),
       tanggalTerima: optionalString("tanggalTerima"),
+      tanggalSisaKas: optionalString("tanggalSisaKas"),
+      lampiran: optionalString("lampiran"),
       tempatSurat: optionalString("tempatSurat"),
       tanggalSurat: optionalString("tanggalSurat"),
+      logoDataUrl: hasLogoOverride ? logoOverride : persistedSchool.logo_data_url,
     });
 
     const documentFiles: Array<{

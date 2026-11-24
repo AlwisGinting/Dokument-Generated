@@ -29,6 +29,7 @@ import {
   type FormEvent,
 } from "react";
 import SmartPartEditor from "@/components/SmartPartEditor";
+import SchoolLogoField from "@/components/SchoolLogoField";
 import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { getSupabaseBrowserClient } from "@/lib/services/supabaseBrowser";
 import type {
@@ -80,22 +81,26 @@ interface QuickSchoolDraft {
   nama_sekolah: string;
   npsn: string;
   alamat_dusun_desa: string;
+  alamat_jalan: string;
   kecamatan: string;
   kabupaten: string;
   provinsi: string;
   nama_kepsek: string;
   no_hp: string;
+  logo_data_url: string | null;
 }
 
 const blankQuickSchool = (): QuickSchoolDraft => ({
   nama_sekolah: "",
   npsn: "",
   alamat_dusun_desa: "",
+  alamat_jalan: "",
   kecamatan: "",
   kabupaten: "",
   provinsi: "",
   nama_kepsek: "",
   no_hp: "",
+  logo_data_url: null,
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -320,6 +325,9 @@ export default function DashboardPage() {
   const [quickSchool, setQuickSchool] = useState<QuickSchoolDraft>(blankQuickSchool);
   const [quickSchoolOpen, setQuickSchoolOpen] = useState(false);
   const [quickSchoolSaving, setQuickSchoolSaving] = useState(false);
+  const [generationLogoDataUrl, setGenerationLogoDataUrl] = useState<
+    string | null | undefined
+  >(undefined);
 
   const [file, setFile] = useState<File | null>(null);
   const [metadata, setMetadata] = useState<BkuMetadata | null>(null);
@@ -452,6 +460,7 @@ export default function DashboardPage() {
           nama_sekolah: quickSchool.nama_sekolah.trim(),
           npsn: quickSchool.npsn.trim() || null,
           alamat_dusun_desa: quickSchool.alamat_dusun_desa.trim() || null,
+          alamat_jalan: quickSchool.alamat_jalan.trim() || null,
           kecamatan: quickSchool.kecamatan.trim() || null,
           kabupaten: quickSchool.kabupaten.trim() || null,
           provinsi: quickSchool.provinsi.trim() || null,
@@ -464,6 +473,7 @@ export default function DashboardPage() {
           jumlah_siswa_p: 0,
           lama_berdiri: null,
           gdrive_folder_id: null,
+          logo_data_url: quickSchool.logo_data_url,
         })
         .select("*")
         .single();
@@ -512,7 +522,8 @@ export default function DashboardPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          schoolProfile: selectedSchool,
+          schoolProfile: { ...selectedSchool, logo_data_url: null },
+          logoDataUrl: generationLogoDataUrl,
           metadata,
           parts,
           tahunAnggaran: Number(year),
@@ -673,7 +684,10 @@ export default function DashboardPage() {
                   <select
                     className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10"
                     disabled={profilesLoading}
-                    onChange={(event) => setSelectedSchoolId(event.target.value)}
+                    onChange={(event) => {
+                      setSelectedSchoolId(event.target.value);
+                      setGenerationLogoDataUrl(null);
+                    }}
                     value={selectedSchoolId}
                   >
                     <option value="">
@@ -724,6 +738,20 @@ export default function DashboardPage() {
                   </Link>
                 </div>
               ) : null}
+              {selectedSchool ? (
+                <div className="mt-3">
+                  <SchoolLogoField
+                    logoDataUrl={
+                      generationLogoDataUrl === undefined
+                        ? selectedSchool.logo_data_url
+                        : generationLogoDataUrl
+                    }
+                    onChange={setGenerationLogoDataUrl}
+                    label="Logo untuk dokumen ini"
+                    description="Opsional; mengganti logo profil hanya untuk bundel yang sedang dibuat."
+                  />
+                </div>
+              ) : null}
               {profileError ? (
                 <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
                   {profileError}
@@ -748,6 +776,7 @@ export default function DashboardPage() {
                       ["nama_sekolah", "Nama sekolah *"],
                       ["npsn", "NPSN"],
                       ["alamat_dusun_desa", "Dusun / desa"],
+                      ["alamat_jalan", "Alamat jalan"],
                       ["kecamatan", "Kecamatan"],
                       ["kabupaten", "Kabupaten"],
                       ["provinsi", "Provinsi"],
@@ -769,6 +798,15 @@ export default function DashboardPage() {
                       />
                     </label>
                   ))}
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <SchoolLogoField
+                      logoDataUrl={quickSchool.logo_data_url}
+                      onChange={(logo_data_url) =>
+                        setQuickSchool((current) => ({ ...current, logo_data_url }))
+                      }
+                      disabled={quickSchoolSaving}
+                    />
+                  </div>
                   <div className="flex items-end sm:col-span-2 lg:col-span-4">
                     <button
                       className="inline-flex items-center gap-2 rounded-lg bg-emerald-800 px-3.5 py-2.5 text-xs font-semibold text-white disabled:opacity-60"
