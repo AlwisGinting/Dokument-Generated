@@ -1,5 +1,5 @@
-import { PDFParse } from "pdf-parse";
 import { extractText } from "unpdf";
+import { extractPdfTextViaGoogleDrive } from "@/lib/services/googleDriveService";
 import * as XLSX from "xlsx";
 import type {
   BkuMetadata,
@@ -403,7 +403,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function parsePdfWithFallback(fileBuffer: Buffer): Promise<{
+async function parsePdfWithFallback(
+  fileBuffer: Buffer,
+  fileName: string,
+): Promise<{
   metadata: BkuMetadata;
   transactions: UnclassifiedBkuTransaction[];
 }> {
@@ -423,40 +426,35 @@ async function parsePdfWithFallback(fileBuffer: Buffer): Promise<{
     unpdfError = error;
   }
 
-  let fallbackResult: ReturnType<typeof parsePdfLines> | null = null;
-  let fallbackError: unknown;
+  let driveResult: ReturnType<typeof parsePdfLines> | null = null;
+  let driveError: unknown;
   try {
-    const parser = new PDFParse({ data: Uint8Array.from(fileBuffer) });
-    try {
-      const result = await parser.getText({ cellSeparator: "\t" });
-      fallbackResult = parsePdfLines(result.text.split(/\r?\n/));
-    } finally {
-      await parser.destroy();
+    const text = await extractPdfTextViaGoogleDrive(fileBuffer, fileName);
+    driveResult = parsePdfLines(text.split(/\r?\n/));
+    if (driveResult.transactions.length > 0) {
+      return driveResult;
     }
   } catch (error) {
-    fallbackError = error;
+    driveError = error;
   }
 
-  if (fallbackResult?.transactions.length) {
-    return fallbackResult;
-  }
-  if (unpdfResult && fallbackResult) {
+  if (unpdfResult && driveResult) {
     return parsedMetadataCount(unpdfResult.metadata) >=
-      parsedMetadataCount(fallbackResult.metadata)
+      parsedMetadataCount(driveResult.metadata)
       ? unpdfResult
-      : fallbackResult;
+      : driveResult;
   }
-  if (fallbackResult) {
-    return fallbackResult;
+  if (driveResult) {
+    return driveResult;
   }
 
   throw new Error(
     [
       "Ekstraksi teks PDF gagal.",
       `unpdf: ${unpdfError ? errorMessage(unpdfError) : "tidak menemukan baris transaksi."}`,
-      `pdf-parse: ${fallbackError ? errorMessage(fallbackError) : "tidak menemukan baris transaksi."}`,
+      `Google Drive: ${driveError ? errorMessage(driveError) : "tidak menemukan baris transaksi."}`,
     ].join(" "),
-    { cause: fallbackError ?? unpdfError },
+    { cause: driveError ?? unpdfError },
   );
 }
 
@@ -484,7 +482,7 @@ export async function parseBkuFile(
   }
 
   if (extension === "pdf") {
-    return parsePdfWithFallback(fileBuffer);
+    return parsePdfWithFallback(fileBuffer, fileName);
   }
 
   throw new Error("Format BKU tidak didukung. Unggah file PDF atau XLSX.");

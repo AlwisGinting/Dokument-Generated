@@ -152,6 +152,54 @@ export async function uploadBinaryFile(input: {
   return toStoredFile(response.data);
 }
 
+export async function extractPdfTextViaGoogleDrive(
+  buffer: Buffer,
+  fileName: string,
+): Promise<string> {
+  const drive = getGoogleDriveClient();
+  let temporaryFileId: string | null = null;
+  let extractionFailed = false;
+
+  try {
+    const converted = await drive.files.create({
+      requestBody: {
+        name: fileName.replace(/\.pdf$/i, "") || "BKU",
+        mimeType: "application/vnd.google-apps.document",
+      },
+      media: {
+        mimeType: "application/pdf",
+        body: Readable.from([buffer]),
+      },
+      fields: "id",
+      supportsAllDrives: true,
+    });
+    temporaryFileId = requiredFileId(converted.data, "dokumen sementara hasil OCR");
+    const exported = await drive.files.export(
+      { fileId: temporaryFileId, mimeType: "text/plain" },
+      { responseType: "arraybuffer" },
+    );
+    return responseDataToBuffer(exported.data).toString("utf8");
+  } catch (error) {
+    extractionFailed = true;
+    throw error;
+  } finally {
+    if (temporaryFileId) {
+      try {
+        await drive.files.delete({
+          fileId: temporaryFileId,
+          supportsAllDrives: true,
+        });
+      } catch (cleanupError) {
+        if (extractionFailed) {
+          console.error("Google Drive temporary PDF cleanup failed:", cleanupError);
+        } else {
+          throw cleanupError;
+        }
+      }
+    }
+  }
+}
+
 function responseDataToBuffer(value: unknown): Buffer {
   if (Buffer.isBuffer(value)) {
     return value;
