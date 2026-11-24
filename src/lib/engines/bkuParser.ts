@@ -331,6 +331,8 @@ function isRepeatedPdfLine(line: string): boolean {
     !normalized ||
     /\bbuku kas umum\b/.test(normalized) ||
     /^halaman\b/.test(normalized) ||
+    /^1\s+2\s+3\s+4\s+5\s+6\s+7\s+8$/.test(normalized) ||
+    /^(?:saldo bank|saldo tunai) bulan\b/.test(normalized) ||
     /^(?:jumlah|saldo awal|saldo akhir|menyetujui|kepala sekolah|bendahara|nip|pajak|bunga)\b/.test(
       normalized,
     ) ||
@@ -342,6 +344,9 @@ function isRepeatedPdfLine(line: string): boolean {
 
 const PDF_BLOCK_FOOTER =
   /(?:\b(?:menyetujui|kepala\s+sekolah|bendahara|pajak\s+bunga|saldo\s+akhir)\b|\bnip\.?(?=\s|$)|^\s*(?:pajak|bunga|jumlah)\b)/i;
+const PDF_BOOK_CLOSED = /\bpada hari ini\b/i;
+const PDF_PROOF_CODE = /\b(?:BNU|BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/i;
+const PDF_DOTTED_CODE = /(?<![\d.])\d+(?:\.\d+){1,}\.?(?![\d.])/g;
 
 function stripPdfBlockFooter(line: string): string {
   const footerIndex = line.search(PDF_BLOCK_FOOTER);
@@ -387,9 +392,10 @@ function trailingPdfAmounts(
 
 function standalonePdfMoneyValues(line: string): number[] {
   if (
+    /^1\s+2\s+3\s+4\s+5\s+6\s+7\s+8$/.test(normalize(line)) ||
     PDF_TRANSACTION_DATE.test(line) ||
     containsBkuDottedCode(line) ||
-    /\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+/i.test(line)
+    PDF_PROOF_CODE.test(line)
   ) {
     return [];
   }
@@ -412,8 +418,17 @@ function amountsFromPdfBlock(
   lines: readonly string[],
 ): [number, number, number] | null {
   let pendingValues: number[] = [];
+  const proofIndex = lines.findIndex((line) => PDF_PROOF_CODE.test(line));
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    if (
+      (proofIndex >= 0 && index < proofIndex) ||
+      (proofIndex < 0 &&
+        (PDF_TRANSACTION_DATE.test(line) || containsBkuDottedCode(line)))
+    ) {
+      continue;
+    }
+
     const trailingAmounts = trailingPdfAmounts(line);
     if (trailingAmounts && trailingAmounts.values[1] > 0) {
       return trailingAmounts.values;
@@ -446,6 +461,7 @@ function parsePdfTransactionBlock(
   }
 
   const blockText = lines.join(" ");
+  const proofIndex = lines.findIndex((line) => PDF_PROOF_CODE.test(line));
   const codeSource = lines
     .map((line) => {
       const trailingAmounts = trailingPdfAmounts(line);
@@ -457,7 +473,7 @@ function parsePdfTransactionBlock(
     )
     .join(" ");
   const accountCodes = Array.from(
-    codeSource.matchAll(/\b\d+(?:\.\d+){1,}\b/g),
+    codeSource.matchAll(/(?<![\d.])\d+(?:\.\d+){1,}\.?(?![\d.])/g),
     (match) => match[0],
   );
   const accountCode =
@@ -472,17 +488,21 @@ function parsePdfTransactionBlock(
       : "";
   const kodeKegiatan = activityCode || shortActivityCode;
   const proofCode =
-    blockText.match(
-      /\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/i,
-    )?.[0] ??
+    blockText.match(PDF_PROOF_CODE)?.[0] ??
     blockText.match(/\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+\b/i)?.[0] ??
     "";
 
   const description = lines
     .map((rawLine, index) => {
+      if (PDF_BOOK_CLOSED.test(rawLine)) {
+        return "";
+      }
       let line = stripPdfBlockFooter(rawLine);
       if (index === 0) {
         line = line.replace(PDF_TRANSACTION_DATE, " ");
+      }
+      if (index < proofIndex && /^\s*\d{1,3}\s*$/.test(line)) {
+        return "";
       }
       if (isRepeatedPdfLine(line)) {
         return "";
@@ -498,9 +518,12 @@ function parsePdfTransactionBlock(
       line = line
         .replace(/\bBuku Kas Umum\b/gi, " ")
         .replace(/\bHalaman\s+\d+(?:\s+dari\s+\d+)?\b/gi, " ")
-        .replace(/\b\d+(?:\.\d+){1,}\b/g, " ")
-        .replace(/\b(?:BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/gi, " ")
+        .replace(PDF_DOTTED_CODE, " ")
+        .replace(/\b(?:BNU|BPU|BKU)[\s._/-]*[A-Z0-9]+(?:[._/-][A-Z0-9]+)*/gi, " ")
         .replace(/\b[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+\b/gi, " ");
+      if (index <= proofIndex) {
+        line = line.replace(/^\s*\d{1,3}\s+/, " ");
+      }
       if (kodeKegiatan && /^\d{1,3}$/.test(kodeKegiatan)) {
         line = line.replace(new RegExp(`^\\s*${kodeKegiatan}\\b`), " ");
       }
@@ -514,7 +537,11 @@ function parsePdfTransactionBlock(
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .toLocaleLowerCase("id-ID")
+    .replace(/(^|[\s/-])([\p{L}\d])/gu, (_match, separator: string, initial: string) =>
+      `${separator}${initial.toLocaleUpperCase("id-ID")}`,
+    );
 
   if (!description || isSummaryRow(description, amounts[1])) {
     return null;
@@ -552,6 +579,12 @@ function parseMultilinePdfTransactions(
   };
 
   for (const line of lines) {
+    if (PDF_BOOK_CLOSED.test(line)) {
+      finishBlock();
+      dateText = null;
+      blockLines = [];
+      break;
+    }
     const dateMatch = line.match(PDF_TRANSACTION_DATE);
     if (dateMatch) {
       finishBlock();
@@ -656,10 +689,22 @@ function parsePdfLines(lines: readonly string[]): {
       : [];
   const fallbackTransactions =
     fallbackRows.length > 0 ? parseTableRows(fallbackRows) : [];
+  const parsedTransactions =
+    transactions.length > 0 ? transactions : fallbackTransactions;
 
   return {
-    metadata,
-    transactions: transactions.length > 0 ? transactions : fallbackTransactions,
+    metadata: {
+      ...metadata,
+      total_pengeluaran:
+        metadata.total_pengeluaran ??
+        (parsedTransactions.length > 0
+          ? parsedTransactions.reduce(
+              (total, transaction) => total + transaction.pengeluaran,
+              0,
+            )
+          : null),
+    },
+    transactions: parsedTransactions,
   };
 }
 

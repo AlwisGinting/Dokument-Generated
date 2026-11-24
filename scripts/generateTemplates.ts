@@ -331,8 +331,7 @@ function createBopReport(logo: Buffer): Document {
               paragraph("Kepala Dinas Pendidikan Pemuda dan Olahraga", {
                 after: 80,
               }),
-              paragraph("Di -", { after: 80 }),
-              paragraph("{kota_dinas}", { after: 0 }),
+              paragraph("Di - {kota_dinas}", { after: 0 }),
             ],
             remainder,
             { verticalAlign: VerticalAlign.TOP },
@@ -346,15 +345,15 @@ function createBopReport(logo: Buffer): Document {
   const details = [
     [
       "Jumlah dana yang diterima di Bank SUMUT pada tanggal {tanggal_terima}",
-      "Rp. {jumlah_terima},-",
+      "Rp{jumlah_terima},00",
     ],
     [
       "Sisa dana / Kas di {nama_sekolah} pada tanggal {tanggal_sisa_kas}",
-      "Rp. {sisa_kas},-",
+      "Rp{sisa_kas},00",
     ],
     [
       "Rekapitulasi penggunaan dana {periode_rekap}",
-      "Rp. {total_pengeluaran},-",
+      "Rp{total_pengeluaran},00",
     ],
   ];
   const detailTable = borderlessTable(

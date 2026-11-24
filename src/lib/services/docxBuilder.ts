@@ -39,10 +39,7 @@ function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "";
   }
-  return new Intl.NumberFormat("id-ID", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 0,
-  }).format(value);
+  return new Intl.NumberFormat("id-ID").format(value);
 }
 
 function fileSafeName(value: string): string {
@@ -177,7 +174,7 @@ function buildBaseData(input: BuildLpjDocumentsInput): Record<string, unknown> {
     tahun_pelajaran: nextSchoolYear,
     nomor_surat: input.nomorSurat ?? "",
     lampiran: input.lampiran ?? "1 (satu) berkas",
-    kota_dinas: metadata.kabupaten ?? school.kabupaten ?? "",
+    kota_dinas: regency,
     nama_bank: input.namaBank ?? "",
     tanggal_terima:
       input.tanggalTerima ??

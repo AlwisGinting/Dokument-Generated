@@ -194,7 +194,7 @@ async function testBkuPdfParsing(): Promise<void> {
   assert.equal(parsed.metadata.npsn, "12345678");
   assert.equal(parsed.transactions.length, 1);
   assert.equal(parsed.transactions[0].bulan, "Januari");
-  assert.equal(parsed.transactions[0].uraian, "pensil");
+  assert.equal(parsed.transactions[0].uraian, "Pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
 }
 
@@ -250,9 +250,9 @@ async function testArkasMultilinePdfParsing(): Promise<void> {
   assert.deepEqual(
     parsed.transactions.map(({ uraian }) => uraian),
     [
-      "alat tulis kantor",
-      "kertas dan tinta",
-      "buku gambar",
+      "Alat Tulis Kantor",
+      "Kertas Dan Tinta",
+      "Buku Gambar",
     ],
   );
   assert.ok(
@@ -270,6 +270,121 @@ async function testArkasMultilinePdfParsing(): Promise<void> {
   assert.deepEqual(
     parsed.transactions.map(({ saldo }) => saldo),
     [5_000_000, 4_750_000, 4_250_000],
+  );
+}
+
+async function testArkasMay2024EightColumnPdfParsing(): Promise<void> {
+  const entries = [
+    ["Tinta Printer", 340_000],
+    ["Listrik", 25_000],
+    ["Listrik", 25_000],
+    ["Listrik", 25_000],
+    ["Listrik", 25_000],
+    ["Listrik", 25_000],
+    ["Nasi Bungkus", 450_000],
+    ["Internet", 150_000],
+    ["Internet", 150_000],
+    ["Minyak Kayu Putih", 30_000],
+    ["Minyak Kayu Putih", 30_000],
+    ["Paracetamol", 15_000],
+    ["Paracetamol", 10_000],
+    ["Penghapus", 105_000],
+    ["Pensil", 90_000],
+    ["Pensil", 90_000],
+    ["Buku Tulis", 420_000],
+    ["Honor Marsahaya", 1_500_000],
+    ["Bubur Kacang Hijau", 150_000],
+    ["Bubur Kacang Hijau", 150_000],
+    ["Bubur Kacang Hijau", 150_000],
+    ["Bubur Kacang Hijau", 150_000],
+    ["Bubur Kacang Hijau", 150_000],
+    ["Honor Agus Toni", 1_000_000],
+    ["Honor Agus Toni", 1_000_000],
+    ["Kertas F4", 240_000],
+  ] as const;
+  const expectedTotal = entries.reduce((total, [, amount]) => total + amount, 0);
+  assert.equal(entries.length, 26);
+  assert.equal(expectedTotal, 6_495_000);
+
+  const document = await PDFDocument.create();
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  let runningBalance = 7_590_000;
+  for (let start = 0; start < entries.length; start += 9) {
+    const page = document.addPage([792, 792]);
+    const lines = start === 0
+      ? [
+          "Periode: Mei 2024",
+          "Tahun Anggaran: 2024",
+          "1 2 3 4 5 6 7 8",
+          "Saldo Bank Bulan Mei 2024",
+          "Saldo Tunai Bulan Mei 2024",
+          "Bunga Bank",
+          "Pajak Bunga",
+        ]
+      : [];
+    for (const [index, [description, amount]] of entries
+      .slice(start, start + 9)
+      .entries()) {
+      const transactionIndex = start + index;
+      const day = String(transactionIndex + 1).padStart(2, "0");
+      const proof = `BNU${String(transactionIndex + 1).padStart(2, "0")}`;
+      const accountCode =
+        description.startsWith("Honor")
+          ? "5.1.02.02.0013"
+          : description === "Listrik" || description === "Internet"
+            ? "5.1.02.02.0061"
+            : "5.1.02.01.01.00";
+      const activityCode = "03.03.18.";
+      runningBalance -= amount;
+      lines.push(
+        `${day}-05-2024 ${activityCode} ${accountCode}`,
+        `${accountCode.endsWith(".00") ? "24 " : ""}${proof} ${description}--`,
+        `0 ${amount.toLocaleString("id-ID")} ${runningBalance.toLocaleString("id-ID")}`,
+      );
+    }
+    if (start === 18) {
+      lines.push(
+        "Jumlah",
+        "Pada hari ini tanggal 31 Mei 2024 Buku Kas Umum Ditutup",
+        "31-05-2024 03.03.18. 5.1.02.01.01.00",
+        "24 BNU99 Baris yang tidak boleh dibaca--",
+        "0 999.999.999 999.999.999",
+      );
+    }
+    lines.forEach((text, index) => {
+      page.drawText(text, {
+        x: 48,
+        y: 748 - index * 17,
+        size: 8,
+        font,
+      });
+    });
+  }
+
+  const parsed = await parseBkuFile(
+    Buffer.from(await document.save()),
+    "bku-arkas-mei-2024.pdf",
+  );
+  assert.equal(parsed.transactions.length, 26);
+  assert.equal(parsed.metadata.total_pengeluaran, expectedTotal);
+  assert.equal(
+    parsed.transactions.reduce((total, item) => total + item.pengeluaran, 0),
+    expectedTotal,
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ uraian }) => uraian),
+    entries.map(([description]) => description),
+  );
+  assert.ok(parsed.transactions.every(({ no_bukti }) => /^BNU\d{2}$/.test(no_bukti)));
+  assert.ok(
+    parsed.transactions.every(
+      ({ uraian }) =>
+        !/\b\d+\b|5\.1\.02|03\.03\.18|--|BNU\d+/i.test(uraian),
+    ),
+  );
+  assert.deepEqual(
+    parsed.transactions.map(({ pengeluaran }) => pengeluaran),
+    entries.map(([, amount]) => amount),
   );
 }
 
@@ -443,6 +558,8 @@ async function testDocxBuilder(): Promise<void> {
     }
     if (document.template === "template_laporan_bop.docx") {
       assert.ok(xml.includes("748.000"));
+      assert.ok(xml.includes("Rp748.000,00"));
+      assert.ok(xml.includes("Di - Deli Serdang"));
     }
   }
 
@@ -661,6 +778,7 @@ async function main(): Promise<void> {
   await testAnnualAndMonthlyBkuBatch();
   await testBkuPdfParsing();
   await testArkasMultilinePdfParsing();
+  await testArkasMay2024EightColumnPdfParsing();
   testManualPartValidation();
   testGoogleDriveFolderIdParsing();
   await testDocxBuilder();
