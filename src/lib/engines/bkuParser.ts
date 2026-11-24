@@ -1,4 +1,5 @@
 import { PDFParse } from "pdf-parse";
+import { extractText } from "unpdf";
 import * as XLSX from "xlsx";
 import type {
   BkuMetadata,
@@ -394,6 +395,71 @@ function parsePdfLines(lines: readonly string[]): {
   };
 }
 
+function parsedMetadataCount(metadata: BkuMetadata): number {
+  return Object.values(metadata).filter((value) => value !== null).length;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function parsePdfWithFallback(fileBuffer: Buffer): Promise<{
+  metadata: BkuMetadata;
+  transactions: UnclassifiedBkuTransaction[];
+}> {
+  let unpdfResult: ReturnType<typeof parsePdfLines> | null = null;
+  let unpdfError: unknown;
+
+  try {
+    const result = await extractText(Uint8Array.from(fileBuffer), {
+      mergePages: false,
+    });
+    const pages = Array.isArray(result.text) ? result.text : [result.text];
+    unpdfResult = parsePdfLines(pages.join("\n").split(/\r?\n/));
+    if (unpdfResult.transactions.length > 0) {
+      return unpdfResult;
+    }
+  } catch (error) {
+    unpdfError = error;
+  }
+
+  let fallbackResult: ReturnType<typeof parsePdfLines> | null = null;
+  let fallbackError: unknown;
+  try {
+    const parser = new PDFParse({ data: Uint8Array.from(fileBuffer) });
+    try {
+      const result = await parser.getText({ cellSeparator: "\t" });
+      fallbackResult = parsePdfLines(result.text.split(/\r?\n/));
+    } finally {
+      await parser.destroy();
+    }
+  } catch (error) {
+    fallbackError = error;
+  }
+
+  if (fallbackResult?.transactions.length) {
+    return fallbackResult;
+  }
+  if (unpdfResult && fallbackResult) {
+    return parsedMetadataCount(unpdfResult.metadata) >=
+      parsedMetadataCount(fallbackResult.metadata)
+      ? unpdfResult
+      : fallbackResult;
+  }
+  if (fallbackResult) {
+    return fallbackResult;
+  }
+
+  throw new Error(
+    [
+      "Ekstraksi teks PDF gagal.",
+      `unpdf: ${unpdfError ? errorMessage(unpdfError) : "tidak menemukan baris transaksi."}`,
+      `pdf-parse: ${fallbackError ? errorMessage(fallbackError) : "tidak menemukan baris transaksi."}`,
+    ].join(" "),
+    { cause: fallbackError ?? unpdfError },
+  );
+}
+
 export async function parseBkuFile(
   fileBuffer: Buffer,
   fileName: string,
@@ -418,13 +484,7 @@ export async function parseBkuFile(
   }
 
   if (extension === "pdf") {
-    const parser = new PDFParse({ data: Uint8Array.from(fileBuffer) });
-    try {
-      const result = await parser.getText({ cellSeparator: "\t" });
-      return parsePdfLines(result.text.split(/\r?\n/));
-    } finally {
-      await parser.destroy();
-    }
+    return parsePdfWithFallback(fileBuffer);
   }
 
   throw new Error("Format BKU tidak didukung. Unggah file PDF atau XLSX.");

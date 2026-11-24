@@ -12,7 +12,7 @@ const MAX_TOTAL_UPLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 12;
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Terjadi kesalahan saat membaca BKU.";
+  return error instanceof Error ? error.message : String(error);
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

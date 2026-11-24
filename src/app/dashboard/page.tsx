@@ -140,7 +140,11 @@ async function responseJson<T extends { error?: string }>(
   }
   const result = payload as T;
   if (!response.ok) {
-    throw new Error(result.error || `Permintaan gagal (HTTP ${response.status}).`);
+    const backendError =
+      typeof result.error === "string" ? result.error.trim() : "";
+    throw new Error(
+      backendError || `Permintaan gagal (HTTP ${response.status}).`,
+    );
   }
   return result;
 }
