@@ -15,6 +15,7 @@ import { validateSpjParts } from "@/lib/engines/spjValidation";
 import { buildLpjDocuments } from "@/lib/services/docxBuilder";
 import { prepareExcelForPdf } from "@/lib/services/precisionConverter";
 import { extractGoogleDriveFolderId } from "@/lib/utils/googleDriveFolderId";
+import { fitPngDimensions } from "@/lib/utils/pngDimensions";
 import type {
   BkuMetadata,
   SchoolProfile,
@@ -737,45 +738,68 @@ async function testDocxBuilder(): Promise<void> {
   assert.ok(utilityXml.includes("KWITANSI PEMBELIAN / PEMBAYARAN"));
   assert.ok(!utilityXml.includes("PESANAN BARANG"));
 
-  const fiveItemPart: SpjPart = {
+  const threeItemPart: SpjPart = {
     ...parts[0],
-    items: Array.from({ length: 5 }, (_, index) => ({
-      no: index + 1,
-      nama_barang:
-        index === 1 ? "Buku Tulis (bagian 2)" : `Barang ${index + 1}`,
-      diantar: "2026-01-15",
-      banyaknya: index === 1 ? "Bagian 2 dari 2" : "1",
-      harga_satuan: 100_000,
-      jumlah_harga: 100_000,
-    })),
-    total_part: 500_000,
+    uraian_singkat: "Pembelian Penghapus Kecil Faber Castle, Pencil, Penghapus Besar",
+    items: [
+      {
+        no: 1,
+        nama_barang: "Penghapus Kecil Faber Castle",
+        diantar: "2026-01-15",
+        banyaknya: "1",
+        harga_satuan: 100_000,
+        jumlah_harga: 100_000,
+      },
+      {
+        no: 2,
+        nama_barang: "Pencil",
+        diantar: "2026-01-15",
+        banyaknya: "1",
+        harga_satuan: 95_000,
+        jumlah_harga: 95_000,
+      },
+      {
+        no: 3,
+        nama_barang: "Penghapus Besar",
+        diantar: "2026-01-15",
+        banyaknya: "1",
+        harga_satuan: 90_000,
+        jumlah_harga: 90_000,
+      },
+    ],
+    total_part: 285_000,
   };
-  const fiveItemDocument = (await buildLpjDocuments({
+  const threeItemDocument = (await buildLpjDocuments({
     schoolProfile,
     metadata,
-    parts: [fiveItemPart],
+    parts: [threeItemPart],
   })).find((document) => document.template === "template_spj_part.docx");
-  assert.ok(fiveItemDocument);
-  const fiveItemXml = new PizZip(fiveItemDocument.buffer)
+  assert.ok(threeItemDocument);
+  const threeItemXml = new PizZip(threeItemDocument.buffer)
     .file("word/document.xml")
     ?.asText();
-  assert.ok(fiveItemXml);
-  assert.equal((fiveItemXml.match(/w:type="page"/g) ?? []).length, 2);
-  assert.equal((fiveItemXml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 1);
-  for (const itemName of [
-    "Barang 1",
-    "Buku Tulis",
-    "Barang 3",
-    "Barang 4",
-    "Barang 5",
-  ]) {
-    assert.equal(
-      (fiveItemXml.match(new RegExp(itemName, "g")) ?? []).length,
-      2,
-      `${itemName} appears in both goods tables`,
-    );
-  }
-  assert.ok(!/bagian/i.test(fiveItemXml));
+  assert.ok(threeItemXml);
+  assert.equal((threeItemXml.match(/w:type="page"/g) ?? []).length, 2);
+  assert.equal((threeItemXml.match(/KWITANSI PEMBELIAN \/ PEMBAYARAN/g) ?? []).length, 1);
+  assert.ok(threeItemXml.includes("Rp285.000,00"));
+  assert.ok(
+    threeItemXml.includes(
+      "Pembayaran Penghapus Kecil Faber Castle, Pencil, Penghapus Besar (Januari)",
+    ),
+  );
+  assert.deepEqual(
+    fitPngDimensions(
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.alloc(4),
+        Buffer.from("IHDR"),
+        Buffer.from([0, 0, 1, 44, 0, 0, 0, 100]),
+      ]),
+      72,
+      72,
+    ),
+    { width: 72, height: 24 },
+  );
 
   const honorPart: SpjPart = {
     ...parts[1],

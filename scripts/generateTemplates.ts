@@ -16,6 +16,7 @@ import {
   WidthType,
   type ISectionOptions,
 } from "docx";
+import { fitPngDimensions } from "../src/lib/utils/pngDimensions";
 
 const outputDirectory = path.resolve(process.cwd(), "public", "templates");
 const logoPath = path.resolve(process.cwd(), "public", "assets", "logo_paud.png");
@@ -100,6 +101,7 @@ function imageParagraph(
   alignment: (typeof AlignmentType)[keyof typeof AlignmentType],
   spacing: { before?: number; after?: number } = {},
 ): Paragraph {
+  const dimensions = fitPngDimensions(logo, width, height);
   return new Paragraph({
     alignment,
     spacing: { before: spacing.before ?? 0, after: spacing.after ?? 0 },
@@ -107,7 +109,7 @@ function imageParagraph(
       new ImageRun({
         type: "png",
         data: logo,
-        transformation: { width, height },
+        transformation: dimensions,
         altText: {
           name: "Logo PAUD",
           title: "Logo PAUD",
@@ -132,13 +134,13 @@ function makeCell(
     width: { size: width, type: WidthType.DXA },
     columnSpan: options.columnSpan,
     verticalAlign: options.verticalAlign ?? VerticalAlign.CENTER,
-    margins: { top: 50, bottom: 50, left: 60, right: 60 },
+    margins: { top: 60, bottom: 60, left: 60, right: 60 },
     borders: borderlessBorders,
   });
 }
 
 function letterhead(logo: Buffer): (Paragraph | Table)[] {
-  const leftWidth = 1247;
+  const leftWidth = 1500;
   const rightWidth = contentWidth - leftWidth;
   const header = new Table({
     width: { size: contentWidth, type: WidthType.DXA },
@@ -148,7 +150,7 @@ function letterhead(logo: Buffer): (Paragraph | Table)[] {
       new TableRow({
         children: [
           makeCell(
-            [imageParagraph(logo, 82, 82, AlignmentType.CENTER)],
+            [imageParagraph(logo, 72, 72, AlignmentType.CENTER)],
             leftWidth,
           ),
           makeCell(
@@ -545,6 +547,18 @@ function receiptPage(): Paragraph[] {
       bold: true,
       underline: true,
       size: 28,
+      after: 0,
+    }),
+    paragraph("Jumlah pembayaran: {total_kwitansi}", {
+      alignment: AlignmentType.CENTER,
+      bold: true,
+      size: 26,
+      before: 600,
+      after: 280,
+    }),
+    paragraph("{uraian_kwitansi}", {
+      alignment: AlignmentType.CENTER,
+      size: 24,
       after: 0,
     }),
     paragraph(

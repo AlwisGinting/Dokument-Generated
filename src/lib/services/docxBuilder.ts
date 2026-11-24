@@ -8,6 +8,7 @@ import type {
   SpjPart,
 } from "@/lib/types/lpj";
 import { isPngDataUrl } from "@/lib/utils/logoDataUrl";
+import { getPngDimensions } from "@/lib/utils/pngDimensions";
 
 export interface BuildLpjDocumentsInput {
   schoolProfile: SchoolProfile;
@@ -58,6 +59,61 @@ function cleanItemName(value: string): string {
     .replace(/\s*\(bagian\s+\d+\)\s*/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function formatReceiptAmount(value: number): string {
+  return `Rp${new Intl.NumberFormat("id-ID", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}`;
+}
+
+function receiptDescription(part: SpjPart): string {
+  const itemSummary = part.items
+    .map((item) => cleanItemName(item.nama_barang))
+    .filter(Boolean)
+    .join(", ");
+  const description =
+    part.is_barang && itemSummary ? itemSummary : part.uraian_singkat.trim();
+  return `Pembayaran ${description}${part.bulan_alokasi ? ` (${part.bulan_alokasi})` : ""}`;
+}
+
+function resizeLogoDrawings(xml: string, logo: Buffer): string {
+  const { width, height } = getPngDimensions(logo);
+  let resizedCount = 0;
+  const resizedXml = xml.replace(
+    /<wp:inline\b[\s\S]*?<\/wp:inline>/g,
+    (inline) => {
+      if (!inline.includes('name="Logo PAUD"')) {
+        return inline;
+      }
+
+      const extent = inline.match(/<wp:extent\b[^>]*\/>/)?.[0];
+      const extentWidth = extent?.match(/\bcx="(\d+)"/);
+      const extentHeight = extent?.match(/\bcy="(\d+)"/);
+      if (!extent || !extentWidth || !extentHeight) {
+        throw new Error("Dimensi logo pada master template tidak ditemukan.");
+      }
+
+      const maxExtent = Math.max(Number(extentWidth[1]), Number(extentHeight[1]));
+      const scale = maxExtent / Math.max(width, height);
+      const cx = Math.round(width * scale);
+      const cy = Math.round(height * scale);
+      const updateExtent = (tag: string): string =>
+        tag
+          .replace(/\bcx="\d+"/, `cx="${cx}"`)
+          .replace(/\bcy="\d+"/, `cy="${cy}"`);
+
+      resizedCount += 1;
+      return inline
+        .replace(extent, updateExtent(extent))
+        .replace(/<a:ext\b[^>]*\/>/g, updateExtent);
+    },
+  );
+  if (resizedCount === 0) {
+    throw new Error("Gambar logo tidak ditemukan pada master template.");
+  }
+  return resizedXml;
 }
 
 function fileSafeName(value: string): string {
@@ -133,6 +189,14 @@ async function renderTemplate(
   for (const imagePath of imagePaths) {
     zip.file(imagePath, logo);
   }
+  const documentXml = zip.file("word/document.xml");
+  if (!documentXml) {
+    throw new Error(`Master template "${templateName}" tidak memiliki document.xml.`);
+  }
+  zip.file(
+    "word/document.xml",
+    resizeLogoDrawings(documentXml.asText(), logo),
+  );
 
   const document = new Docxtemplater(zip, {
     paragraphLoop: true,
@@ -269,6 +333,8 @@ export async function buildLpjDocuments(
         ? "KWITANSI PEMBAYARAN HONORARIUM"
         : "KWITANSI PEMBELIAN / PEMBAYARAN",
     total_part: formatNumber(part.total_part),
+    total_kwitansi: formatReceiptAmount(part.total_part),
+    uraian_kwitansi: receiptDescription(part),
     items: part.items.map((item) => ({
       ...item,
       nama_barang: cleanItemName(item.nama_barang),
