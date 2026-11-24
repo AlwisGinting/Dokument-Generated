@@ -4,6 +4,7 @@ import { PDFDocument, StandardFonts } from "pdf-lib";
 import PizZip from "pizzip";
 import * as XLSX from "xlsx";
 import { parseBkuFile } from "@/lib/engines/bkuParser";
+import { mergeBkuParseResults } from "@/lib/engines/bkuBatch";
 import { classifyTransaction } from "@/lib/engines/classifierEngine";
 import { splitTransactionsIntoSpjParts, MAX_BARANG_PART_CENTS } from "@/lib/engines/splitterEngine";
 import { terbilangRupiah } from "@/lib/engines/terbilang";
@@ -78,6 +79,7 @@ async function testBkuXlsxParsing(): Promise<void> {
   assert.equal(parsed.metadata.npsn, "12345678");
   assert.equal(parsed.metadata.saldo_awal, 1_000_000);
   assert.equal(parsed.transactions.length, 1);
+  assert.equal(parsed.transactions[0].bulan, "Januari");
   assert.equal(parsed.transactions[0].uraian, "Pembelian pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
 
@@ -87,6 +89,68 @@ async function testBkuXlsxParsing(): Promise<void> {
   assert.ok(worksheetXml?.includes('fitToWidth="1"'));
   assert.ok(worksheetXml?.includes('fitToHeight="0"'));
   assert.ok(worksheetXml?.includes('fitToPage="1"'));
+}
+
+async function testAnnualAndMonthlyBkuBatch(): Promise<void> {
+  const headers = [
+    "Tanggal",
+    "Kode Kegiatan",
+    "Kode Rekening",
+    "No Bukti",
+    "Uraian",
+    "Penerimaan",
+    "Pengeluaran",
+    "Saldo",
+  ];
+  const annualWorkbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    annualWorkbook,
+    XLSX.utils.aoa_to_sheet([
+      ["Tahun Anggaran", 2026],
+      headers,
+      ["15/01/2026", "01", "5.1.02.02.0024", "ATK-001", "Pembelian pensil", 0, 25_000, 975_000],
+      ["10/05/2026", "01", "5.1.02.02.0024", "ATK-005", "Pembelian buku", 0, 50_000, 925_000],
+      ["11/05/2026", "01", "5.1.02.02.0024", "ATK-006", "Pembelian map", 0, 30_000, 895_000],
+      ["11/05/2026", "01", "5.1.02.02.0024", "ATK-006", "Pembelian map", 0, 30_000, 865_000],
+    ]),
+    "BKU Tahunan",
+  );
+  const annualFile = Buffer.from(
+    XLSX.write(annualWorkbook, { bookType: "xlsx", type: "buffer" }),
+  );
+  const annual = await parseBkuFile(annualFile, "BKU_Tahunan.xlsx");
+  assert.deepEqual(
+    annual.transactions.map((transaction) => transaction.bulan),
+    ["Januari", "Mei", "Mei", "Mei"],
+  );
+
+  const duplicatedAnnualBatch = mergeBkuParseResults([annual, annual]);
+  assert.equal(duplicatedAnnualBatch.transactions.length, 4);
+  assert.equal(duplicatedAnnualBatch.metadata.total_pengeluaran, 135_000);
+  assert.equal(duplicatedAnnualBatch.metadata.bulan, "Januari – Mei");
+  assert.equal(duplicatedAnnualBatch.metadata.tahun, 2026);
+  assert.equal(duplicatedAnnualBatch.period, "Januari – Mei 2026");
+
+  const januaryOnly = {
+    metadata: annual.metadata,
+    transactions: [annual.transactions[0]],
+  };
+  const mayOnly = {
+    metadata: annual.metadata,
+    transactions: annual.transactions.slice(1),
+  };
+  const monthlyBatch = mergeBkuParseResults([mayOnly, januaryOnly]);
+  assert.deepEqual(
+    monthlyBatch.transactions.map((transaction) => transaction.tanggal),
+    [
+      "2026-01-15",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-11",
+    ],
+  );
+  assert.equal(monthlyBatch.period, "Januari – Mei 2026");
+  assert.equal(monthlyBatch.metadata.total_pengeluaran, 135_000);
 }
 
 async function testBkuPdfParsing(): Promise<void> {
@@ -128,6 +192,7 @@ async function testBkuPdfParsing(): Promise<void> {
   assert.equal(parsed.metadata.tahun, 2026);
   assert.equal(parsed.metadata.npsn, "12345678");
   assert.equal(parsed.transactions.length, 1);
+  assert.equal(parsed.transactions[0].bulan, "Januari");
   assert.equal(parsed.transactions[0].uraian, "Pembelian pensil");
   assert.equal(parsed.transactions[0].pengeluaran, 25_000);
 }
@@ -303,6 +368,26 @@ async function main(): Promise<void> {
     goodsParts.reduce((total, part) => total + part.total_part, 0),
     1_500_000,
   );
+  const goodsAcrossMonths = splitTransactionsIntoSpjParts([
+    classified({
+      tanggal: "2026-01-15",
+      no_bukti: "ATK-JAN",
+      uraian: "Pembelian kertas",
+      pengeluaran: 600_000,
+    }),
+    classified({
+      tanggal: "2026-05-10",
+      no_bukti: "ATK-MEI",
+      uraian: "Pembelian buku",
+      pengeluaran: 500_000,
+    }),
+  ]);
+  assert.equal(goodsAcrossMonths.length, 2);
+  assert.deepEqual(
+    goodsAcrossMonths.map((part) => part.bulan_alokasi),
+    ["Januari", "Mei"],
+  );
+  assert.ok(goodsAcrossMonths.every((part) => part.total_part <= 1_000_000));
   const overLimitPart = {
     ...goodsParts[0],
     items: [
@@ -339,6 +424,28 @@ async function main(): Promise<void> {
   assert.equal(salaryParts[0].is_barang, false);
   assert.equal(salaryParts[0].total_part, 1_500_000);
   assert.deepEqual(validateSpjParts(salaryParts), []);
+  const salariesAcrossMonths = splitTransactionsIntoSpjParts([
+    classified({
+      tanggal: "2026-01-15",
+      kode_rekening: "5.1.02.02.0013",
+      no_bukti: "HONOR-JAN",
+      uraian: "Gaji Guru",
+      pengeluaran: 1_500_000,
+    }),
+    classified({
+      tanggal: "2026-05-10",
+      kode_rekening: "5.1.02.02.0013",
+      no_bukti: "HONOR-MEI",
+      uraian: "Gaji Guru",
+      pengeluaran: 1_500_000,
+    }),
+  ]);
+  assert.equal(salariesAcrossMonths.length, 2);
+  assert.deepEqual(
+    salariesAcrossMonths.map((part) => part.bulan_alokasi),
+    ["Januari", "Mei"],
+  );
+  assert.ok(salariesAcrossMonths.every((part) => part.total_part === 1_500_000));
 
   const namedEducator = classifyTransaction(
     transaction({ uraian: "Transfer Ibu Siti Rahayu", pengeluaran: 1_500_000 }),
@@ -363,6 +470,7 @@ async function main(): Promise<void> {
   assert.equal(duplicateOversizedGoods.length, 4);
 
   await testBkuXlsxParsing();
+  await testAnnualAndMonthlyBkuBatch();
   await testBkuPdfParsing();
   await testDocxBuilder();
   console.log("Engine tests passed: parsing, classification, splitting, Rupiah wording, DOCX generation, and Excel fit-to-page.");

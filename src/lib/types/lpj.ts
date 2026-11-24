@@ -35,6 +35,7 @@ export interface Vendor {
 
 export interface BkuTransaction {
   tanggal: string;
+  bulan?: string;
   kode_kegiatan: string;
   kode_rekening: string;
   no_bukti: string;

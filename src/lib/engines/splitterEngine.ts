@@ -76,6 +76,10 @@ function monthFromDate(date: string): string {
     : "Belum ditentukan";
 }
 
+function monthForTransaction(transaction: BkuTransaction): string {
+  return transaction.bulan?.trim() || monthFromDate(transaction.tanggal);
+}
+
 function sanitizeCode(value: string): string {
   return value
     .normalize("NFD")
@@ -194,8 +198,12 @@ function packFirstFitDecreasing(entries: readonly IndexedTransaction[]): Expande
 function duplicateKey(transaction: BkuTransaction): string {
   return [
     transaction.tanggal.trim(),
+    transaction.kode_kegiatan.trim(),
+    transaction.kode_rekening.trim(),
     transaction.no_bukti.trim(),
     normalizeText(transaction.uraian),
+    transaction.kategori,
+    transaction.sub_kategori_toko ?? "",
     toCents(transaction.pengeluaran),
   ].join("\u001f");
 }
@@ -270,7 +278,7 @@ export function splitTransactionsIntoSpjParts(
   for (const unit of makeSplitUnits(transactions)) {
     if (unit.kind === "fixed") {
       for (const entry of unit.parts) {
-        const month = entry.bulan ?? monthFromDate(entry.transaction.tanggal);
+        const month = entry.bulan ?? monthForTransaction(entry.transaction);
         if (
           entry.transaction.kategori === "BELANJA_BARANG" &&
           toCents(entry.transaction.pengeluaran) > MAX_BARANG_PART_CENTS
@@ -336,7 +344,7 @@ export function splitTransactionsIntoSpjParts(
         sourceTransactions,
         items,
         ordinal,
-        monthFromDate(sourceTransactions[0].tanggal),
+        monthForTransaction(sourceTransactions[0]),
         totalCents,
       );
       if (toCents(part.total_part) !== totalCents) {

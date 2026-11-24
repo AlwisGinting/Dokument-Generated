@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -44,6 +45,8 @@ type DashboardTab = "generator" | "converter";
 
 interface ParseResponse {
   metadata: BkuMetadata;
+  period?: string;
+  files?: string[];
   transactions: BkuTransaction[];
   parts: SpjPart[];
   error?: string;
@@ -110,8 +113,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function responseJson<T extends { error?: string }>(
   response: Response,
 ): Promise<T> {
-  const payload: unknown = await response.json();
+  const rawText = await response.text();
+  let payload: unknown;
+  try {
+    payload = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    const detail = rawText.trim().slice(0, 240);
+    if (!response.ok) {
+      throw new Error(
+        detail
+          ? `Permintaan gagal (HTTP ${response.status}): ${detail}`
+          : `Permintaan gagal (HTTP ${response.status}) dan server tidak mengirim respons JSON.`,
+      );
+    }
+    throw new Error(
+      detail
+        ? `Respons server bukan JSON yang valid: ${detail}`
+        : "Server mengembalikan respons kosong.",
+    );
+  }
   if (!isRecord(payload)) {
+    if (!response.ok) {
+      throw new Error(`Permintaan gagal (HTTP ${response.status}).`);
+    }
     throw new Error("Respons server tidak valid.");
   }
   const result = payload as T;
@@ -293,6 +317,112 @@ function FileDropzone({
   );
 }
 
+function BkuFileDropzone({
+  files,
+  onSelect,
+  onDropFiles,
+  onRemove,
+  onClear,
+}: {
+  files: readonly File[];
+  onSelect: (event: ChangeEvent<HTMLInputElement>) => void;
+  onDropFiles: (files: File[]) => void;
+  onRemove: (index: number) => void;
+  onClear: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const totalSize = files.reduce((total, file) => total + file.size, 0);
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    onDropFiles(Array.from(event.dataTransfer.files));
+  }
+
+  return (
+    <div
+      className={`rounded-2xl border-2 border-dashed p-4 transition sm:p-5 ${
+        files.length > 0
+          ? "border-emerald-300 bg-emerald-50/50"
+          : "border-slate-300 bg-slate-50/70 hover:border-emerald-400 hover:bg-emerald-50/40"
+      }`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <input
+        accept=".pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="hidden"
+        multiple
+        onChange={onSelect}
+        ref={inputRef}
+        type="file"
+      />
+      <button
+        className="flex w-full flex-col items-center text-center"
+        onClick={() => inputRef.current?.click()}
+        type="button"
+      >
+        <span className="grid h-11 w-11 place-items-center rounded-xl bg-white text-emerald-800 shadow-sm">
+          <CloudUpload size={22} />
+        </span>
+        <span className="mt-3 text-sm font-semibold text-slate-800">
+          {files.length > 0 ? "Tambah file BKU" : "Tarik atau pilih file BKU"}
+        </span>
+        <span className="mt-1 text-xs text-slate-500">
+          1 BKU tahunan atau hingga 12 BKU bulanan (PDF/XLSX), total maks. 4 MiB
+        </span>
+      </button>
+      {files.length > 0 ? (
+        <div className="mt-4 space-y-3">
+          <ul className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            {files.map((file, index) => (
+              <li
+                className="flex min-w-0 items-center gap-3 px-3 py-2.5"
+                key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-800">
+                  {file.name.toLowerCase().endsWith(".xlsx") ? (
+                    <FileSpreadsheet size={17} />
+                  ) : (
+                    <FileText size={17} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold text-slate-800">
+                    {file.name}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-slate-500">
+                    {fileSize(file.size)}
+                  </span>
+                </span>
+                <button
+                  aria-label={`Hapus ${file.name}`}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-700"
+                  onClick={() => onRemove(index)}
+                  type="button"
+                >
+                  <X size={15} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-slate-600">
+              {files.length} file · {fileSize(totalSize)} total
+            </p>
+            <button
+              className="text-xs font-semibold text-rose-700 hover:underline"
+              onClick={onClear}
+              type="button"
+            >
+              Hapus semua
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StepHeading({
   number,
   title,
@@ -329,7 +459,8 @@ export default function DashboardPage() {
     string | null | undefined
   >(undefined);
 
-  const [file, setFile] = useState<File | null>(null);
+  const [bkuFiles, setBkuFiles] = useState<File[]>([]);
+  const [fileQueueError, setFileQueueError] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<BkuMetadata | null>(null);
   const [transactions, setTransactions] = useState<BkuTransaction[]>([]);
   const [parts, setParts] = useState<SpjPart[]>([]);
@@ -392,8 +523,7 @@ export default function DashboardPage() {
     void Promise.resolve().then(() => loadProfiles());
   }, [loadProfiles]);
 
-  function selectBkuFile(nextFile: File | null) {
-    setFile(nextFile);
+  function clearParsedBku() {
     setMetadata(null);
     setTransactions([]);
     setParts([]);
@@ -402,22 +532,67 @@ export default function DashboardPage() {
     setGeneratorNotice(null);
   }
 
-  async function parseBku() {
-    if (!file) {
-      setGeneratorError("Pilih file BKU PDF atau XLSX terlebih dahulu.");
+  function addBkuFiles(incomingFiles: readonly File[]) {
+    if (incomingFiles.length === 0) {
       return;
     }
-    if (file.size > 4 * 1024 * 1024) {
-      setGeneratorError("Ukuran file BKU melebihi batas 4 MiB.");
+    const supportedFiles = incomingFiles.filter((incomingFile) =>
+      /\.(pdf|xlsx)$/i.test(incomingFile.name),
+    );
+    if (supportedFiles.length !== incomingFiles.length) {
+      setFileQueueError("Hanya file PDF atau XLSX yang dapat ditambahkan.");
+    } else {
+      setFileQueueError(null);
+    }
+    const combined = [...bkuFiles, ...supportedFiles];
+    if (combined.length > 12) {
+      setFileQueueError("Maksimal 12 file BKU dapat dipilih sekaligus.");
+      return;
+    }
+    setBkuFiles(combined);
+    if (combined.reduce((total, item) => total + item.size, 0) > 4 * 1024 * 1024) {
+      setFileQueueError("Total ukuran seluruh file BKU melebihi batas 4 MiB.");
+    }
+    clearParsedBku();
+  }
+
+  function removeBkuFile(index: number) {
+    const nextFiles = bkuFiles.filter((_, fileIndex) => fileIndex !== index);
+    setBkuFiles(nextFiles);
+    setFileQueueError(
+      nextFiles.reduce((total, item) => total + item.size, 0) > 4 * 1024 * 1024
+        ? "Total ukuran seluruh file BKU melebihi batas 4 MiB."
+        : null,
+    );
+    clearParsedBku();
+  }
+
+  function clearBkuFiles() {
+    setBkuFiles([]);
+    setFileQueueError(null);
+    clearParsedBku();
+  }
+
+  async function parseBku() {
+    if (bkuFiles.length === 0) {
+      setFileQueueError("Pilih setidaknya satu file BKU PDF atau XLSX.");
+      return;
+    }
+    if (
+      bkuFiles.length > 12 ||
+      bkuFiles.reduce((total, item) => total + item.size, 0) > 4 * 1024 * 1024
+    ) {
+      setFileQueueError("Maksimal 12 file dengan total ukuran tidak lebih dari 4 MiB.");
       return;
     }
     setParsing(true);
+    setFileQueueError(null);
     setGeneratorError(null);
     setGeneratorNotice(null);
     setGenerationResult(null);
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      bkuFiles.forEach((bkuFile) => formData.append("files", bkuFile));
       const response = await fetch("/api/bku/parse", {
         method: "POST",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -427,14 +602,15 @@ export default function DashboardPage() {
       setMetadata(result.metadata);
       setTransactions(result.transactions);
       setParts(result.parts);
-      const nextPeriod = [result.metadata.bulan, result.metadata.tahun]
+      const nextPeriod = result.period ||
+        [result.metadata.bulan, result.metadata.tahun]
         .filter(Boolean)
         .join(" ");
       setPeriod(nextPeriod);
       setYear(result.metadata.tahun ? String(result.metadata.tahun) : "");
       setLetterPlace(result.metadata.kabupaten ?? selectedSchool?.kabupaten ?? "");
       setGeneratorNotice(
-        `${result.transactions.length} transaksi diperiksa dan ${result.parts.length} Part disiapkan.`,
+        `${result.files?.length ?? bkuFiles.length} file digabung: ${result.transactions.length} transaksi diperiksa dan ${result.parts.length} Part disiapkan.`,
       );
     } catch (parseError) {
       setGeneratorError(
@@ -594,7 +770,9 @@ export default function DashboardPage() {
   }
 
   function handleBkuChange(event: ChangeEvent<HTMLInputElement>) {
-    selectBkuFile(event.target.files?.[0] ?? null);
+    const selectedFiles = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    addBkuFiles(selectedFiles);
   }
 
   function handleConverterChange(event: ChangeEvent<HTMLInputElement>) {
@@ -897,21 +1075,25 @@ export default function DashboardPage() {
                 title="Unggah file BKU"
                 description="File diproses lokal di server dengan parser PDF/XLSX dan aturan klasifikasi deterministik."
               />
-              <FileDropzone
-                accept=".pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                file={file}
-                label="Tarik file BKU .pdf atau .xlsx ke area ini"
-                onClear={() => selectBkuFile(null)}
-                onDropFile={selectBkuFile}
+              <BkuFileDropzone
+                files={bkuFiles}
+                onClear={clearBkuFiles}
+                onDropFiles={addBkuFiles}
+                onRemove={removeBkuFile}
                 onSelect={handleBkuChange}
               />
+              {fileQueueError ? (
+                <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {fileQueueError}
+                </p>
+              ) : null}
               <div className="mt-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <p className="text-xs text-slate-500">
-                  File harus memuat tanggal, uraian, dan kolom pengeluaran.
+                  File harus memuat tanggal, uraian, dan kolom pengeluaran. BKU bulanan ganda akan disatukan secara kronologis.
                 </p>
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!file || parsing}
+                  disabled={bkuFiles.length === 0 || parsing || fileQueueError !== null}
                   onClick={parseBku}
                   type="button"
                 >
@@ -923,7 +1105,7 @@ export default function DashboardPage() {
                 <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   {[
                     ["Sekolah dari BKU", metadata.nama_sekolah || "—"],
-                    ["Periode", [metadata.bulan, metadata.tahun].filter(Boolean).join(" ") || "—"],
+                    ["Periode", period || [metadata.bulan, metadata.tahun].filter(Boolean).join(" ") || "—"],
                     ["Penerimaan", formatCurrency(metadata.total_penerimaan)],
                     ["Pengeluaran", formatCurrency(metadata.total_pengeluaran)],
                   ].map(([label, value]) => (

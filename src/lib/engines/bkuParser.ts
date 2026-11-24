@@ -34,6 +34,21 @@ const EMPTY_METADATA: BkuMetadata = {
   saldo_akhir: null,
 };
 
+const MONTH_NAMES = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
 function cellText(value: CellValue): string {
   if (value === null || value === undefined) {
     return "";
@@ -114,6 +129,19 @@ function normalizeDate(value: CellValue): string {
     }
   }
   return raw;
+}
+
+function monthNameFromDate(date: string): string | undefined {
+  const isoMatch = date.match(/^\d{4}-(\d{2})-\d{2}$/);
+  const localMatch = date.match(/^\d{1,2}[/-](\d{1,2})[/-]\d{2,4}$/);
+  const month = isoMatch
+    ? Number(isoMatch[1])
+    : localMatch
+      ? Number(localMatch[1])
+      : Number.NaN;
+  return Number.isInteger(month) && month >= 1 && month <= 12
+    ? MONTH_NAMES[month - 1]
+    : undefined;
 }
 
 function valueAfterLabel(lines: readonly string[], label: string): string | null {
@@ -238,8 +266,10 @@ function transactionFromRow(
     return null;
   }
 
+  const tanggal = normalizeDate(get(columns.tanggal));
   return {
-    tanggal: normalizeDate(get(columns.tanggal)),
+    tanggal,
+    bulan: monthNameFromDate(tanggal),
     kode_kegiatan: cellText(get(columns.kode_kegiatan)),
     kode_rekening: cellText(get(columns.kode_rekening)),
     no_bukti: cellText(get(columns.no_bukti)),
@@ -323,8 +353,10 @@ function parsePlainPdfLines(lines: readonly string[]): UnclassifiedBkuTransactio
       continue;
     }
 
+    const tanggal = normalizeDate(dateMatch[1]);
     transactions.push({
-      tanggal: normalizeDate(dateMatch[1]),
+      tanggal,
+      bulan: monthNameFromDate(tanggal),
       kode_kegiatan,
       kode_rekening,
       no_bukti,
